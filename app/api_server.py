@@ -3,22 +3,19 @@ import uvicorn
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from typing import Optional
+from starlette import status
 from app.kv_store import KVStore
-from core.snapshot_manager import SnapshotManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global in-memory key-value store and snapshot manager
+# Global in-memory key-value store
 kv = KVStore()
-snapshot_mgr = SnapshotManager()
 
 app = FastAPI(
-    title="StateFork API",
-    description="A Container Stateful-branching Benchmark System",
+    title="StateFork API service",
+    description="Our testing API service for Container Stateful-branching Benchmark System",
     version="0.1.0"
 )
 
@@ -65,7 +62,7 @@ async def root():
     """
     return {"message": "Welcome to the StateFork API!"}
 
-@app.get("/get/{key}")
+@app.get("/get/{key}", status_code=status.HTTP_200_OK)
 async def get_value(key: str):
     """
     Retrieve the value for a given key from the KV store.
@@ -76,34 +73,24 @@ async def get_value(key: str):
     return {"key": key, "value": value}
 
 
-@app.get("/set/{key}/{value}")
+@app.get("/set/{key}/{value}", status_code=status.HTTP_200_OK)
 async def set_value(key: str, value: str):
     """
-    Set a value for a given key in the KV store and create a snapshot.
+    Set a value for a given key in the KV store.
     """
     kv.set(key, value)
-    snapshot_id = snapshot_mgr.create_snapshot(kv.all())
-    return {"status": "ok", "snapshot": snapshot_id}
+    return {"key": key, "value": value}
 
-
-@app.get("/restore/{snapshot_id}")
-async def restore_snapshot(snapshot_id: str):
+@app.get("/all", status_code=status.HTTP_200_OK)
+async def list_all():
     """
-    Restore the KV store to a previous state using a given snapshot ID.
+    List all key-value pairs in the KV store.
     """
-    restored = snapshot_mgr.restore_snapshot(snapshot_id)
-    if restored is not None:
-        kv.store = restored
-        return {"status": "restored", "snapshot": snapshot_id}
-    raise HTTPException(status_code=404, detail="Snapshot not found")
-
-
-@app.get("/snapshots")
-async def list_snapshots():
-    """
-    Return a list of all available snapshot IDs.
-    """
-    return {"snapshots": snapshot_mgr.list_snapshots()}
+    all_items = kv.all()
+    count = len(all_items)
+    if not all_items:
+        return {"items": {}, "count": 0}
+    return {"items": all_items, "count": count}
 
 
 if __name__ == "__main__":
