@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global in-memory key-value store
-kv = KVStore()
+kv = KVStore(preload=True)  # Preload with some initial data for testing
 
 app = FastAPI(
     title="StateFork API service",
