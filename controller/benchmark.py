@@ -20,4 +20,4 @@ class BenchmarkStats:
 
     def print_summary(self):
         for entry in self.log:
-            print(f"#{entry.sequence} [{entry.operation.upper()}] -> {entry.target_id} took {entry.elapsed_time:.4f}s")
+            print(f"#{entry.sequence:<4d} [{entry.operation.upper():<10}] -> {entry.target_id:<8} took {entry.elapsed_time:.6f}s")

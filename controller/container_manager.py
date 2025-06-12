@@ -15,6 +15,7 @@ class EnvironmentManager(ABC):
     def __init__(self):
         self.snapshots: Dict[str, str] = {}  # snapshot_id -> image_id
         self.stats = BenchmarkStats()
+        self.current_snapshot_id: Optional[str] = None
 
     @abstractmethod
     def snapshot(self) -> str:
@@ -54,10 +55,17 @@ class EnvironmentManager(ABC):
 class DockerEnvironmentManager(EnvironmentManager):
     def __init__(self, base_image: str = "statefork-app:latest"):
         super().__init__()
-        self.base_image = base_image
 
-        logger.info("Building base Docker image...")
-        subprocess.run(["docker", "build", "-t", self.base_image, "."], check=True)
+        logger.info(f"Building base Docker image '{base_image}'...")
+        subprocess.run(["docker", "build", "-t", base_image, "."], check=True)
+
+        self.snapshots["base"] = base_image
+
+        logger.info("Creating initial environment from base image...")
+        res = self.create_env_from_snapshot("base")
+        if res is None:
+            raise RuntimeError("Failed to create initial environment from base image.")
+
 
     def snapshot(self) -> str:
         snapshot_id = str(uuid.uuid4())[:8]
@@ -87,7 +95,7 @@ class DockerEnvironmentManager(EnvironmentManager):
 
         start = time.time()
         subprocess.run([
-            "docker", "run", "-d",
+            "docker", "run", "-d", "--rm",
             "--name", new_container_name,
             "-p", "8000:8000",
             image_name
@@ -97,6 +105,7 @@ class DockerEnvironmentManager(EnvironmentManager):
         self.stats.add_entry("create_env", snapshot_id, elapsed)
 
         logger.info(f"Container created from snapshot {snapshot_id} in {elapsed:.4f}s")
+        self.current_snapshot_id = snapshot_id
         return new_container_name
 
     def restore(self, snapshot_id: str) -> bool:
