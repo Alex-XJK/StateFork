@@ -41,15 +41,20 @@ class EnvironmentManager(ABC):
         """
         pass
 
+    @abstractmethod
+    def cleanup(self):
+        """
+        Clean up any resources used by the environment manager.
+        This should be called when the manager is no longer needed.
+        """
+        pass
+
     def list_snapshots(self) -> List[str]:
         """
         List all available snapshots.
         Returns a list of snapshot IDs.
         """
         return list(self.snapshots.keys())
-
-    def print_benchmark_log(self):
-        self.stats.print_summary()
 
 
 class DockerEnvironmentManager(EnvironmentManager):
@@ -117,52 +122,12 @@ class DockerEnvironmentManager(EnvironmentManager):
             self.stats.add_entry("restore", snapshot_id, elapsed)
         return success
 
-
-def main():
-    manager = DockerEnvironmentManager()
-
-    print("StateFork Container Manager")
-    print("Commands: snapshot, list, restore <id>, step, stats, exit")
-
-    while True:
-        cmd = input("StateFork > ").strip()
-
-        if cmd == "exit":
-            break
-
-        elif cmd == "snapshot":
-            sid = manager.snapshot()
-            print(f"Snapshot created: {sid}")
-
-        elif cmd == "list":
-            print("Available snapshots:")
-            for s in manager.list_snapshots():
-                print(f" - {s}")
-
-        elif cmd.startswith("restore"):
-            _, _, sid = cmd.partition(" ")
-            if not sid:
-                print("Usage: restore <snapshot_id>")
-                continue
-            ok = manager.restore(sid)
-            if ok:
-                print(f"Restored to snapshot {sid}")
-            else:
-                print(f"Snapshot {sid} not found.")
-
-        elif cmd == "step":
-            sid = manager.snapshot()
-            container = manager.create_env_from_snapshot(sid)
-            if container is None:
-                print("Failed to create new container from snapshot.")
-            else:
-                print(f"Stepped to new container with snapshot {sid}")
-
-        elif cmd == "stats":
-            manager.print_benchmark_log()
-
-        else:
-            print("Unknown command. Available: snapshot, list, restore <id>, step, stats, exit")
-
-if __name__ == "__main__":
-    main()
+    def cleanup(self):
+        logger.info("Cleaning up Docker environment...")
+        subprocess.run(["docker", "rm", "-f", "statefork_active"], stderr=subprocess.DEVNULL)
+        for snapshot_id in list(self.snapshots.keys()):
+            if snapshot_id != "base":
+                image_name = self.snapshots[snapshot_id]
+                subprocess.run(["docker", "rmi", image_name], stderr=subprocess.DEVNULL)
+                del self.snapshots[snapshot_id]
+        logger.info("Cleanup complete.")

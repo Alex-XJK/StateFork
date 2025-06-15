@@ -37,7 +37,7 @@ uvicorn app.api_server:app --host 0.0.0.0 --port 8000
 
 ### 2. Run the Container Manager
 ```bash
-python3 controller/container_manager.py
+python3 controller/main.py
 ```
 You will enter an interactive shell like:
 ```
