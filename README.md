@@ -42,7 +42,7 @@ python3 controller/main.py
 You will enter an interactive shell like:
 ```
 StateFork Container Manager
-Commands: snapshot, list, restore <id>, step, stats, exit
+Commands: snapshot, restore <id>, . . . , exit
 StateFork > _
 ```
 
@@ -50,11 +50,12 @@ StateFork > _
 | Command	      | Description                                        |
 |---------------|----------------------------------------------------|
 | snapshot	     | Commit current container as a new image (snapshot) |
+| restore {id}	 | Restore to a previous snapshot (by snapshot ID)    |
 | step	         | Take snapshot and create a new container from it   |
-| restore <id>	 | Restore to a previous snapshot (by snapshot ID)    |
-| list	         | List all available snapshot IDs                    |
+| tree	         | Draw the tree graph of snapshot IDs                |
 | stats	        | Show timing benchmark for all operations           |
-| exit	         | Exit the manager                                   |
+| history	      | List all operation logs                            |
+| exit	         | Clean up and exit the manager                      |
 
 ## 🔧 Requirements
 - Docker (installed and running)

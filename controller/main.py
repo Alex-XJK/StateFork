@@ -1,31 +1,18 @@
-from container_manager import DockerEnvironmentManager
+from environment_manager import DockerEnvironmentManager
 
 def main():
+    available_commands = ["snapshot", "restore <id>", "step", "tree", "stats", "history", "exit"]
     manager = DockerEnvironmentManager()
 
     print("StateFork Container Manager")
-    print("Commands: snapshot, list, restore <id>, step, stats, exit")
+    print(f"Available commands: {', '.join(available_commands)}")
 
     while True:
         cmd = input("StateFork > ").strip()
 
-        if cmd == "exit":
-            print("Execution history:")
-            manager.stats.print_history()
-            print("Overall statistics:")
-            manager.stats.print_stats()
-            print("Cleaning up resources...")
-            manager.cleanup()
-            break
-
-        elif cmd == "snapshot":
+        if cmd == "snapshot":
             sid = manager.snapshot()
             print(f"Snapshot created: {sid}")
-
-        elif cmd == "list":
-            print("Available snapshots:")
-            for s in manager.list_snapshots():
-                print(f" - {s}")
 
         elif cmd.startswith("restore"):
             _, _, sid = cmd.partition(" ")
@@ -46,11 +33,24 @@ def main():
             else:
                 print(f"Stepped to new container with snapshot {sid}")
 
+        elif cmd == "tree":
+            manager.print_snapshot_tree()
+
         elif cmd == "stats":
             manager.stats.print_stats()
 
+        elif cmd == "history":
+            manager.stats.print_history()
+
+        elif cmd == "exit":
+            manager.stats.print_stats()
+            print("Cleaning up resources...")
+            manager.cleanup()
+            break
+
         else:
-            print("Unknown command. Available: snapshot, list, restore <id>, step, stats, exit")
+            print(f"Unknown command: {cmd}")
+            print(f"Available commands: {', '.join(available_commands)}")
 
 if __name__ == "__main__":
     main()
