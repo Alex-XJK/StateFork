@@ -1,8 +1,8 @@
-from environment_manager import DockerEnvironmentManager
+from docker_env_manager import DockerContainerManager
 
 def main():
     available_commands = ["snapshot", "restore <id>", "step", "tree", "stats", "history", "exit"]
-    manager = DockerEnvironmentManager()
+    manager = DockerContainerManager()
 
     print("StateFork Container Manager")
     print(f"Available commands: {', '.join(available_commands)}")
