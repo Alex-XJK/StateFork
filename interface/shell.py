@@ -11,9 +11,9 @@ def main(args):
     elif args.method == "podman":
         manager = create_env_manager("podman_build")
     elif args.method == "criu":
-        manager = create_env_manager("criu_build")
+        manager = create_env_manager("criu_build", command=["python3", "app/sql_insert.py", "--reconnect"])
     elif args.method == "hybrid":
-        manager = create_env_manager("hybrid_build")
+        manager = create_env_manager("hybrid_build", extra_args=["--network", "host", "-v", "/tmp:/tmp"])
     else:
         raise ValueError(f"Unsupported command method: {args.method}")
 

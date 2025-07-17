@@ -17,12 +17,14 @@ COPY requirements.txt .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install psycopg2-binary
 
 # Copy full project
 COPY . .
 
 # Expose port
-EXPOSE 8000
+# EXPOSE 8000
 
 # Command to run the API server
-CMD ["uvicorn", "app.api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+# CMD ["uvicorn", "app.api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python3", "app/sql_insert.py", "--reconnect"]
