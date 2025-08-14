@@ -14,6 +14,8 @@ def main(args):
         manager = create_env_manager("criu_build")
     elif args.method == "hybrid":
         manager = create_env_manager("hybrid_build")
+    elif args.method == "ckpt":
+        manager = create_env_manager("ckpt_build")
     else:
         raise ValueError(f"Unsupported command method: {args.method}")
 
@@ -73,7 +75,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Environment Manager Launcher")
-    parser.add_argument("--method", choices=["docker", "criu", "podman", "hybrid"], default="docker",
+    parser.add_argument("--method", choices=["docker", "criu", "podman", "hybrid", "ckpt"], default="docker",
                         help="Choose the environment manager backend")
     args_ns = parser.parse_args()
     logging.basicConfig(level=logging.INFO)

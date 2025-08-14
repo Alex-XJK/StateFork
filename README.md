@@ -47,6 +47,7 @@ They follow the naming convention `{Backend}{Action}Manager`, where:
   - `Container` for Docker/Podman (manages file system state only)
   - `CRIU` for process-level CRIU checkpointing
   - `Hybrid` for Podman + CRIU (captures both file and process states) 
+  - `CheckpointLite` for Checkpoint-lite, a lightweight checkpointing tool (captures both file and process states)
 - **{Action}** Lifecycle mode:
   - `Build` starts a fresh instance (for testing/dev)
   - `Attach` connects to an existing container or process
@@ -67,16 +68,18 @@ manager = create_env_manager(method="criu_attach", target_pid=12345)
 ```
 See the full method table below for supported types and arguments.
 
-| Factory Call Name | Env Manager            | Backend       | Required Arguments                       | Optional Arguments                                                                       |
-|-------------------|------------------------|---------------|------------------------------------------|------------------------------------------------------------------------------------------|
-| `docker_build`    | ContainerBuildManager  | Docker        |                                          | `dockerfile_dir(str)`, `base_image(str)`, `extra_args(List[str])`                        |
-| `docker_attach`   | ContainerAttachManager | Docker        | `container_name(str)`, `base_image(str)` | `extra_args(List[str])`                                                                  |
-| `podman_build`    | ContainerBuildManager  | Podman        |                                          | `dockerfile_dir(str)`, `base_image(str)`, `extra_args(List[str])`                        |
-| `podman_attach`   | ContainerAttachManager | Podman        | `container_name(str)`, `base_image(str)` | `extra_args(List[str])`                                                                  |
-| `criu_build`      | CRIUBuildManager       | CRIU          |                                          | `work_dir(str)`, `command(List[str])`                                                    |
-| `criu_attach`     | CRIUAttachManager      | CRIU          | `target_pid(int)`                        | `work_dir(str)`                                                                          |
-| `hybrid_build`    | HybridBuildManager     | Podman + CRIU |                                          | `container_name(str)`, `dockerfile_dir(str)`, `export_dir(str)`, `extra_args(List[str])` |
-| `hybrid_attach`   | HybridAttachManager    | Podman + CRIU | `container_name(str)`                    | `export_dir(str)`                                                                        |
+| Factory Call Name | Env Manager                 | Backend         | Required Arguments                       | Optional Arguments                                                                       |
+|-------------------|-----------------------------|-----------------|------------------------------------------|------------------------------------------------------------------------------------------|
+| `docker_build`    | ContainerBuildManager       | Docker          |                                          | `dockerfile_dir(str)`, `base_image(str)`, `extra_args(List[str])`                        |
+| `docker_attach`   | ContainerAttachManager      | Docker          | `container_name(str)`, `base_image(str)` | `extra_args(List[str])`                                                                  |
+| `podman_build`    | ContainerBuildManager       | Podman          |                                          | `dockerfile_dir(str)`, `base_image(str)`, `extra_args(List[str])`                        |
+| `podman_attach`   | ContainerAttachManager      | Podman          | `container_name(str)`, `base_image(str)` | `extra_args(List[str])`                                                                  |
+| `criu_build`      | CRIUBuildManager            | CRIU            |                                          | `work_dir(str)`, `command(List[str])`                                                    |
+| `criu_attach`     | CRIUAttachManager           | CRIU            | `target_pid(int)`                        | `work_dir(str)`                                                                          |
+| `hybrid_build`    | HybridBuildManager          | Podman + CRIU   |                                          | `container_name(str)`, `dockerfile_dir(str)`, `export_dir(str)`, `extra_args(List[str])` |
+| `hybrid_attach`   | HybridAttachManager         | Podman + CRIU   | `container_name(str)`                    | `export_dir(str)`                                                                        |
+| `ckpt_build`      | CheckpointLiteBuildManager  | Checkpoint-lite |                                          | `init_dir(str)`, `command(List[str])`                                                    |
+| `ckpt_attach`     | CheckpointLiteAttachManager | Checkpoint-lite | `target_pid(int)`, `session_id(str)`     |                                                                                          |
 
 ## 🧪 Benchmarking Support
 StateFork automatically logs and benchmarks the performance of:
@@ -116,6 +119,11 @@ pip install -r requirements.txt
 - CRIU and Podman must be installed as above.
 - Must use Root or `sudo` privileges to run Podman commands, as [the checkpoints currently work with root containers only](https://podman.io/docs/checkpoint).
 - Manually set the OCI runtime in `/usr/share/containers/containers.conf` to use **runc** instead of the default **crun**.
+
+### Checkpoint-lite Method (CRIU + OverlayFS)
+- Checkpoint-lite must be installed from: [github.com/Alex-XJK/checkpoint-lite](https://github.com/Alex-XJK/checkpoint-lite)
+- Make sure the `checkpoint-lite` binary is in the current directory (suggested using a symbolic link).
+- Root or `sudo` privileges are required.
 
 ---
 For core controller usage, see the `controller/README.md` file.  
