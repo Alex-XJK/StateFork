@@ -33,16 +33,17 @@ class HybridAttachManager(EnvironmentManager):
 
         # Ensure container is running
         self.__ensure_container_running()
-
-        # Take initial snapshot
-        sid, _ = self._core_snapshot()
-        if sid is None:
-            raise RuntimeError("Failed to create initial snapshot.")
-
-        # Init the Tree Graph
-        self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=None)
-        self.current_snapshot_id = sid
-        self.last_snapshot_id = sid
+        print("container is running")
+        # For terminal-bench integration, we don't create initial snapshot here
+        # The agent will create checkpoints as needed
+        print("Skipping initial snapshot creation for terminal-bench integration")
+        
+        # Init the Tree Graph with a placeholder
+        self.current_snapshot_id = None
+        self.last_snapshot_id = None
+        
+        # Initialize snapshots dict
+        self.snapshots = {}
 
         # Attach the FileSizeCalculator to the export directory
         self._stats.attach_size_calculator(FileSizeCalculator(self.export_dir))
@@ -58,9 +59,52 @@ class HybridAttachManager(EnvironmentManager):
         sid = str(uuid.uuid4())[:8]
         export_path = os.path.join(self.export_dir, f"{sid}.tar.zstd")
 
+        # Kill tmux sessions before checkpoint to avoid socket issues
+        # Terminal-bench will automatically recreate tmux sessions when needed
+        try:
+            subprocess.run([
+                "podman", "exec", self.container_name, "tmux", "kill-server"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[DEBUG] Killed tmux server before checkpoint")
+        except Exception as e:
+            print(f"[DEBUG] Warning: Failed to kill tmux server before checkpoint: {e}")
+        
+        # Clean up any remaining tmux socket files to avoid CRIU issues
+        try:
+            subprocess.run([
+                "podman", "exec", self.container_name, "bash", "-c", "rm -rf /tmp/tmux-*"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[DEBUG] Cleaned up tmux socket files before checkpoint")
+        except Exception as e:
+            print(f"[DEBUG] Warning: Failed to clean up tmux socket files: {e}")
+        
+        # Additional cleanup: kill any remaining tmux processes and clean sockets again
+        try:
+            subprocess.run([
+                "podman", "exec", self.container_name, "pkill", "-f", "tmux"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([
+                "podman", "exec", self.container_name, "bash", "-c", "rm -rf /tmp/tmux-*"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[DEBUG] Additional cleanup: killed tmux processes and cleaned sockets again")
+        except Exception as e:
+            print(f"[DEBUG] Warning: Failed to do additional cleanup: {e}")
+        
+        # Verify no tmux sockets remain
+        try:
+            result = subprocess.run([
+                "podman", "exec", self.container_name, "bash", "-c", "ls -l /tmp | grep tmux || echo 'no sockets'"
+            ], capture_output=True, text=True)
+            if "no sockets" in result.stdout.strip():
+                print(f"[DEBUG] Verified: No tmux sockets remain")
+            else:
+                print(f"[DEBUG] WARNING: Found remaining tmux files: {result.stdout.strip()}")
+        except Exception as e:
+            print(f"[DEBUG] Warning: Failed to verify socket cleanup: {e}")
+
         start = time.time()
         subprocess.run([
-            "podman", "container", "checkpoint", self.container_name,
+            "sudo", "podman", "container", "checkpoint", self.container_name,
             "-e", export_path, "--leave-running"
         ], stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
@@ -74,13 +118,41 @@ class HybridAttachManager(EnvironmentManager):
         if not export_path:
             logger.warning(f"Snapshot ID {snapshot_id} not found.")
             return None, 0.0
-
+        print("[DEBUG] Creating env with podman container named: ", self.container_name)
         # Stop & remove existing container if running
         subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+        # Find the pod for this container
+        pod_name = f"pod_{self.container_name}"
+        try:
+            pod_id = subprocess.run(
+                ["podman", "pod", "ps", "--no-trunc", "--format", "{{.Id}}", "--filter", f"name={pod_name}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            
+            if not pod_id:
+                logger.warning(f"Pod {pod_name} not found, creating new pod")
+                pod_id = subprocess.run(
+                    ["podman", "pod", "create", "--name", pod_name],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to find/create pod: {e}, creating new pod")
+            pod_id = subprocess.run(
+                ["podman", "pod", "create", "--name", pod_name],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
         start = time.time()
         subprocess.run([
-            "podman", "container", "restore",
+            "sudo", "podman", "container", "restore",
+            "--pod", pod_id,  # Use pod ID for restore
             "-i", export_path,
             "-n", self.container_name
         ], stdout=subprocess.DEVNULL, check=True)
@@ -91,6 +163,8 @@ class HybridAttachManager(EnvironmentManager):
     def _core_cleanup(self):
         logger.info(f"Cleaning up Podman container '{self.container_name}'")
         subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info(f"Cleaning up Podman pod '{self.container_name}'")
+        subprocess.run(["podman", "pod", "rm", "-f", f"pod_{self.container_name}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logger.info(f"Cleaning up Podman checkpoint files in {self.export_dir}")
         shutil.rmtree(self.export_dir, ignore_errors=True)
 

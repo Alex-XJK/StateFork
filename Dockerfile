@@ -1,32 +1,46 @@
-# Use a lightweight base image
+# ---------- 基础镜像 ----------
 FROM python:3.11-slim
-LABEL authors="alex"
+LABEL maintainer="alex"
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Set work directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+# ---------- 系统依赖 ----------
+RUN apt-get update && apt-get install -y \
+        curl socat procps iproute2 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy only requirements first for better caching
+# ---------- Python 依赖 ----------
 COPY requirements.txt .
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy full project
+# ---------- 复制项目代码 ----------
 COPY . .
 
-# Expose port
+# ---------- Echo Socket 服务器脚本 ----------
+RUN printf '%s\n' \
+'#!/bin/sh' \
+'set -e' \
+'rm -f /tmp/echo.sock' \
+'exec /usr/bin/socat -d -d \\' \
+'  UNIX-LISTEN:/tmp/echo.sock,mode=666,reuseaddr,fork \\' \
+"  EXEC:'/bin/cat'" \
+> /app/echo_server.sh && chmod +x /app/echo_server.sh
+
+# ---------- 应用启动脚本 ----------
+RUN printf '%s\n' \
+'#!/bin/sh' \
+'set -e' \
+'/app/echo_server.sh &' \
+'exec uvicorn app.api_server:app --host 0.0.0.0 --port 8000' \
+> /app/start.sh \
+&& chmod +x /app/start.sh
+
+# ---------- 对外端口 ----------
 EXPOSE 8000
 
-# Set environment variables for the application
-ENV MEMORY_ARRAY_MB=-1
-ENV FILE_SIZE_MB=-1
-
-# Command to run the API server
-CMD ["uvicorn", "app.api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+# ---------- 容器入口 ----------
+CMD ["/app/start.sh"]
+    

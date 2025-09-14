@@ -16,6 +16,7 @@ numpy==2.3.1
 packaging==25.0
 pillow==11.3.0
 psutil==7.0.0
+psycopg2-binary==2.9.9
 pydantic==2.11.5
 pydantic_core==2.33.2
 pyparsing==3.2.3

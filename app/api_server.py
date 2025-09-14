@@ -2,11 +2,13 @@ import logging
 import os
 import time
 import uvicorn
+import socket
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from starlette import status
 from app.kv_store import KVStore
+# from app.db_store import DBStore
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,8 +22,9 @@ formatter = logging.Formatter('%(asctime)s - %(message)s')
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
-# Global in-memory key-value store
+# Global database key-value store
 kv = KVStore(preload=True)  # Preload with some initial data for testing
+# kv = DBStore(preload=True)  # Preload with some initial data for testing
 
 ########## Memory Allocation for Testing ##########
 ARRAY_SIZE_MB = int(os.getenv("MEMORY_ARRAY_MB", "-1"))  # default None
@@ -165,7 +168,13 @@ def get_stats():
         "file_size_kb": file_size / 1024 if file_size > 0 else 0,
         **memory_stats,
     }
-
+@app.get("/echo")
+def echo(msg: str = "hello"):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect("/tmp/echo.sock")
+        s.sendall(msg.encode() + b"\n")
+        data = s.recv(1024)
+    return {"echo": data.decode().strip()}
 
 
 if __name__ == "__main__":

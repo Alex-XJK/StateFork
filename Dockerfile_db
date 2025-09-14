@@ -1,0 +1,71 @@
+# Use a lightweight base image
+FROM python:3.11-slim
+LABEL authors="alex"
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies including PostgreSQL
+RUN apt-get update && apt-get install -y \
+    curl \
+    postgresql \
+    postgresql-contrib \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only requirements first for better caching
+COPY requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy full project
+COPY . .
+
+# Create PostgreSQL data directory and set permissions
+RUN mkdir -p /var/lib/postgresql/data && \
+    chown -R postgres:postgres /var/lib/postgresql/data && \
+    chmod 700 /var/lib/postgresql/data
+
+# Initialize PostgreSQL database using the correct path
+RUN su - postgres -c "/usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/data"
+
+# Create database initialization script
+RUN echo "CREATE DATABASE statefork_db;" > /tmp/init_db.sql && \
+    echo "\\c statefork_db;" >> /tmp/init_db.sql && \
+    echo "CREATE TABLE kv_store (key VARCHAR(255) PRIMARY KEY, value TEXT);" >> /tmp/init_db.sql && \
+    echo "INSERT INTO kv_store (key, value) VALUES ('key1', 'example_value1'), ('key2', 'example_value2'), ('key3', 'example_value3');" >> /tmp/init_db.sql
+
+# Set PostgreSQL to accept connections and use port 5433
+RUN echo "host all all 0.0.0.0/0 md5" >> /var/lib/postgresql/data/pg_hba.conf && \
+    echo "listen_addresses = '*'" >> /var/lib/postgresql/data/postgresql.conf && \
+    echo "port = 5433" >> /var/lib/postgresql/data/postgresql.conf
+
+# Expose ports
+EXPOSE 8000 5433
+
+# Set environment variables for the application
+ENV MEMORY_ARRAY_MB=-1
+ENV FILE_SIZE_MB=-1
+ENV POSTGRES_DB=statefork_db
+ENV POSTGRES_USER=postgres
+ENV POSTGRES_PASSWORD=postgres
+ENV POSTGRES_PORT=5433
+
+# Create startup script
+RUN echo '#!/bin/bash' > /app/start.sh && \
+    echo 'service postgresql start' >> /app/start.sh && \
+    echo 'sleep 5' >> /app/start.sh && \
+    echo 'until pg_isready -U postgres -p 5433; do' >> /app/start.sh && \
+    echo '    sleep 1' >> /app/start.sh && \
+    echo 'done' >> /app/start.sh && \
+    echo 'su - postgres -c "psql -p 5433 -c \"ALTER USER postgres PASSWORD '\''postgres'\'';\""' >> /app/start.sh && \
+    echo 'su - postgres -c "psql -p 5433 -f /tmp/init_db.sql"' >> /app/start.sh && \
+    echo 'uvicorn app.api_server:app --host 0.0.0.0 --port 8000' >> /app/start.sh && \
+    chmod +x /app/start.sh
+
+# Command to run the startup script
+CMD ["/app/start.sh"]
