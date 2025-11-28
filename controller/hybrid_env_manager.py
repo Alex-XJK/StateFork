@@ -28,6 +28,8 @@ class HybridAttachManager(EnvironmentManager):
         self.container_name = container_name
         self.export_dir = export_dir
         os.makedirs(self.export_dir, exist_ok=True)
+        # Map snapshot_id -> committed image tag to preserve rootfs
+        self.snapshot_images: dict[str, str] = {}
 
         logger.info(f"Initializing HybridAttachManager with container '{self.container_name}'")
 
@@ -78,12 +80,75 @@ class HybridAttachManager(EnvironmentManager):
         # Stop & remove existing container if running
         subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+        # If the container belongs to a pod, restore into that existing pod.
+        # Harness creates pods with the name pattern: "pod_<container_name>"
+        pod_args: list[str] = []
+        try:
+            guessed_pod_name = f"pod_{self.container_name}"
+            # Debug: list current pods before existence check
+            try:
+                pods_list = subprocess.run(
+                    ["podman", "pod", "ps", "--no-trunc", "--format", "{{.ID}} {{.Name}}"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                print(f"[DEBUG] Existing pods before restore:\n{pods_list.stdout or ''}")
+            except Exception as e:
+                logger.debug(f"Failed to list pods before restore: {e}")
+
+            # Resolve pod ID (prefer ID to name for --pod)
+            pod_id: Optional[str] = None
+            try:
+                lines = (pods_list.stdout or "").strip().splitlines()
+                for line in lines:
+                    parts = line.strip().split(maxsplit=1)
+                    if len(parts) == 2:
+                        pid, pname = parts
+                        if pname == guessed_pod_name:
+                            pod_id = pid
+                            break
+            except Exception:
+                pass
+
+            # Fallback via pod inspect to get ID
+            if not pod_id:
+                try:
+                    insp = subprocess.run(
+                        ["podman", "pod", "inspect", guessed_pod_name, "--format", "{{.Id}}"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    pod_id = (insp.stdout or "").strip() or None
+                except Exception:
+                    pod_id = None
+
+            if pod_id:
+                pod_args = ["--pod", pod_id]
+                print(f"[DEBUG] Restoring into pod id: {pod_id} (name: {guessed_pod_name})")
+            else:
+                print(f"[DEBUG] Pod not found by name '{guessed_pod_name}', restoring without --pod")
+        except Exception:
+            # Best-effort only; continue without pod args
+            pass
+
         start = time.time()
-        subprocess.run([
-            "podman", "container", "restore",
-            "-i", export_path,
-            "-n", self.container_name
-        ], stdout=subprocess.DEVNULL, check=True)
+        # Ensure no stale container remains before restore (avoid name-in-use errors)
+        try:
+            subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except Exception:
+            pass
+
+        # Restore processes/state into the container name (created above or created by restore)
+        restore_cmd = ["podman", "container", "restore"]
+        # Always pass pod args to restore if we detected a pod; Podman requires --pod for pod containers
+        if pod_args:
+            restore_cmd += pod_args
+        # Ensure export_path immediately follows -i (do not split -i and its value)
+        restore_cmd += ["-i", export_path, "-n", self.container_name]
+
+        subprocess.run(restore_cmd, stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
 
         return self.container_name, elapsed
