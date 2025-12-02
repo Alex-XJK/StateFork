@@ -163,15 +163,13 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        time.sleep(2)  # wait for app to initialize
+        time.sleep(5)  # wait for app to initialize
 
         super().__init__(target_pid=proc.pid, session_id=sid)
 
-        # Attach the FileSizeCalculator to the both directories
-        overlay_dir = os.path.join(self._work_dir, "../overlays")
-        criu_dir = os.path.join(self._work_dir, "../criu")
-        self._stats.attach_size_calculator(FileSizeCalculator(overlay_dir))
-        self._stats.attach_size_calculator(FileSizeCalculator(criu_dir))
+        # Attach the FileSizeCalculator to the base directory
+        base_dir = os.path.join(self._work_dir, "../")
+        self._stats.attach_size_calculator(FileSizeCalculator(base_dir))
 
     @property
     def work_dir(self) -> str:

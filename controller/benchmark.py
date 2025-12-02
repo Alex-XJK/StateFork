@@ -194,7 +194,7 @@ class BenchmarkStats:
         """
         result = ""
         for entry in self.log:
-            result += f"#{entry.sequence:<4d} [{entry.operation.upper():<10}] -> {entry.target_id:<8} took {entry.elapsed_time:.4f}s\n"
+            result += f"#{entry.sequence:<4d} [{entry.operation.upper():<10}] -> {entry.target_id:<8} took {entry.elapsed_time:.6f}s\n"
         return result
 
     def print_size_details(self) -> str:
