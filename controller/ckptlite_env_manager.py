@@ -6,10 +6,57 @@ import uuid
 import logging
 from typing import Optional, List
 from .base_env_manager import EnvironmentManager, SnapshotNode
-from .benchmark import FileSizeCalculator
+from .benchmark import Calculator
 
 logger = logging.getLogger("EnvManager.CkptLite")
 
+class CkptCalculator(Calculator):
+    """
+    CkptCalculator is a specialized FileSizeCalculator for Checkpoint-lite that
+    collects the sizes of filesystem and memory checkpoint files in a session directory.
+
+    We have to override but not extend the FileSizeCalculator because we need to
+    target a specific subdirectory structure created by Checkpoint-lite v0.4.0 and do some filtering.
+    """
+    def __init__(self, root_dir: str, sub_dir: str, name: str = "CkptFsCalculator"):
+        super().__init__(name=name)
+        self.root_dir = os.path.abspath(root_dir)
+        self.sub_dir = sub_dir  # either "upper" or "criu"
+        self.logger.debug(f"Attached CkptCalculator #{self.instance_id} to {self.root_dir}/*/{self.sub_dir}")
+
+    def __get_all_items(self) -> List[str]:
+        if not os.path.exists(self.root_dir):
+            return []
+        items = []
+        for name in os.listdir(self.root_dir):
+            if name in ["metadata", "work"]:
+                continue
+            sub_path = os.path.join(self.root_dir, name, self.sub_dir)
+            if os.path.exists(sub_path):
+                items.append(sub_path)
+        return items
+
+    def __get_size(self, path: str) -> int:
+        try:
+            output = subprocess.check_output(["du", "-sb", path], text=True)
+            return int(output.split()[0])
+        except Exception as e:
+            self.logger.error(f"Error getting size for {path}: {e}")
+            return 0
+
+    def _collect(self) -> List[tuple[str, int]]:
+        items = self.__get_all_items()
+        if not items:
+            return []
+
+        data = []
+        for item in items:
+            size = self.__get_size(item)
+            if size >= 0:
+                parts = os.path.normpath(item).split(os.sep)
+                name = os.path.join(parts[-2], parts[-1])
+                data.append((name, size))
+        return data
 
 class CheckpointLiteAttachManager(EnvironmentManager):
     """
@@ -141,35 +188,36 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
 
         logger.info(f"New session {sid} with work directory '{self._work_dir}' created.")
 
+        proc_pid = -1
         if command is None:
             logger.info(f"User skipped the APP launch.")
-            super().__init__(target_pid=-1, session_id=sid)
-            return
+        else:
+            if command == "default":
+                command = [
+                    "uvicorn", "app.api_server:app",
+                    "--host", "127.0.0.1",
+                    "--port", "8000",
+                    "--no-access-log"
+                ]
+            elif isinstance(command, str):
+                command = command.split()
 
-        if command == "default":
-            command = [
-                "uvicorn", "app.api_server:app",
-                "--host", "127.0.0.1",
-                "--port", "8000",
-                "--no-access-log"
-            ]
-        elif isinstance(command, str):
-            command = command.split()
+            logger.info(f"Starting initial APP...")
+            proc = subprocess.Popen(
+                command,
+                cwd=self._work_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            time.sleep(5)  # wait for app to initialize
+            proc_pid = proc.pid
 
-        logger.info(f"Starting initial APP...")
-        proc = subprocess.Popen(
-            command,
-            cwd=self._work_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        time.sleep(5)  # wait for app to initialize
+        super().__init__(target_pid=proc_pid, session_id=sid)
 
-        super().__init__(target_pid=proc.pid, session_id=sid)
-
-        # Attach the FileSizeCalculator to the base directory
+        # Attach the new CkptCalculator to this session
         base_dir = os.path.join(self._work_dir, "../")
-        self._stats.attach_size_calculator(FileSizeCalculator(base_dir))
+        self._stats.attach_size_calculator(CkptCalculator(base_dir, "upper", name="FILESYSTEM"))
+        self._stats.attach_size_calculator(CkptCalculator(base_dir, "criu", name="MEMORY"))
 
     @property
     def work_dir(self) -> str:
