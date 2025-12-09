@@ -81,6 +81,8 @@ class CheckpointLiteAttachManager(EnvironmentManager):
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
+        # Temporary toggle off execution vs injection mode, set to False to enable injection mode
+        self._execution_mode = True
 
     def _core_snapshot(self) -> tuple[Optional[str], float]:
         snapshot_id = str(uuid.uuid4())[:8]
@@ -131,14 +133,19 @@ class CheckpointLiteAttachManager(EnvironmentManager):
         if not self.session_id:
             return -1, "", "No session_id available"
 
-        # Convert command into a sequence of arguments (checkpoint-lite expects args list)
+        # Convert command into a single string
         if isinstance(command, str):
             cmd_str = command
         else:
             cmd_str = shlex.join(command)
+        
+        if self._execution_mode:
+            # Execute `command` via `./checkpoint-lite exec <session_id> sh -c "<command>"`
+            exec_args = ["./checkpoint-lite", "exec", self.session_id, "sh", "-c", cmd_str]
+        else:
+            # Inject `command` via `./checkpoint-lite inject <session_id> <target_pid> "<command>"`
+            exec_args = ["./checkpoint-lite", "inject", self.session_id, self.target_pid, cmd_str]
 
-        # Execute `command` via `./checkpoint-lite exec <session_id> <args...>`.
-        exec_args = ["./checkpoint-lite", "exec", self.session_id, "sh", "-c", cmd_str]
         try:
             proc = subprocess.run(
                 exec_args,
@@ -201,8 +208,31 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
         logger.info(f"New session {sid} with work directory '{self._work_dir}' created.")
 
         proc_pid = -1
+        is_injection_mode = False
         if command is None:
             logger.info(f"User skipped the APP launch.")
+        elif command == "terminal":
+            logger.info(f"Starting terminal session...")
+            proc = subprocess.Popen(
+                ["script", "-q", "-c", "bash --norc --noprofile", "/dev/null"],
+                cwd=self._work_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            time.sleep(2)  # wait for terminal to initialize
+            
+            # Capture the PID of the bash shell using pgrep
+            try:
+                pgrep_output = subprocess.check_output(
+                    ["pgrep", "-n", "bash"],
+                    text=True
+                ).strip()
+                proc_pid = int(pgrep_output)
+                is_injection_mode = True
+                logger.info(f"Captured bash PID: {proc_pid}, injection mode: {is_injection_mode}")
+            except (subprocess.CalledProcessError, ValueError) as e:
+                logger.error(f"Failed to capture bash PID: {e}")
+                proc_pid = -1
         else:
             if command == "default":
                 command = [
@@ -230,6 +260,9 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
         base_dir = os.path.join(self._work_dir, "../")
         self._stats.attach_size_calculator(CkptCalculator(base_dir, "upper", name="FILESYSTEM"))
         self._stats.attach_size_calculator(CkptCalculator(base_dir, "criu", name="MEMORY"))
+
+        # Toggle execution vs injection mode
+        self._execution_mode = not is_injection_mode
 
     @property
     def work_dir(self) -> str:
