@@ -15,7 +15,9 @@ def main(args):
     elif args.method == "hybrid":
         manager = create_env_manager("hybrid_build")
     elif args.method == "ckpt":
-        manager = create_env_manager("ckpt_build")
+        user_pid = input("Enter target PID for checkpointing (or leave blank to run new process): ").strip()
+        pid = int(user_pid) if user_pid else -1
+        manager = create_env_manager("ckpt_build", command="terminal", pid=pid)
     else:
         raise ValueError(f"Unsupported command method: {args.method}")
 

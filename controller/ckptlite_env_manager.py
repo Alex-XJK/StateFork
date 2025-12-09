@@ -4,6 +4,7 @@ import subprocess
 import time
 import uuid
 import logging
+import pty
 from typing import Optional, List
 from .base_env_manager import EnvironmentManager, SnapshotNode
 from .benchmark import Calculator
@@ -144,7 +145,7 @@ class CheckpointLiteAttachManager(EnvironmentManager):
             exec_args = ["./checkpoint-lite", "exec", self.session_id, "sh", "-c", cmd_str]
         else:
             # Inject `command` via `./checkpoint-lite inject <session_id> <target_pid> "<command>"`
-            exec_args = ["./checkpoint-lite", "inject", self.session_id, self.target_pid, cmd_str]
+            exec_args = ["./checkpoint-lite", "inject", self.session_id, str(self.target_pid), cmd_str]
 
         try:
             proc = subprocess.run(
@@ -171,10 +172,10 @@ class CheckpointLiteAttachManager(EnvironmentManager):
                 err = err.decode('utf-8', errors='replace')
             
             err = err + f"\n[timeout after {timeout}s]"
-            logger.error(f"CheckpointLite exec timeout: {e}")
+            logger.error(f"CheckpointLite { 'exec' if self._execution_mode else 'inject' } timeout: {e}")
             return -1, out, err
         except Exception as e:
-            logger.error(f"CheckpointLite exec failed: {e}")
+            logger.error(f"CheckpointLite { 'exec' if self._execution_mode else 'inject' } failed: {e}")
             return -1, "", str(e)
 
 class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
@@ -183,6 +184,7 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
     """
     def __init__(self,
                  init_dir: Optional[str] = None,
+                 pid: Optional[int] = None,
                  command: Optional[List[str] | str] = "default"
                  ):
         if init_dir is None:
@@ -207,52 +209,78 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
 
         logger.info(f"New session {sid} with work directory '{self._work_dir}' created.")
 
-        proc_pid = -1
+        proc_pid = pid if pid is not None and pid != -1 else -1
         is_injection_mode = False
-        if command is None:
-            logger.info(f"User skipped the APP launch.")
-        elif command == "terminal":
-            logger.info(f"Starting terminal session...")
-            proc = subprocess.Popen(
-                ["script", "-q", "-c", "bash --norc --noprofile", "/dev/null"],
-                cwd=self._work_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            time.sleep(2)  # wait for terminal to initialize
-            
-            # Capture the PID of the bash shell using pgrep
-            try:
-                pgrep_output = subprocess.check_output(
-                    ["pgrep", "-n", "bash"],
-                    text=True
-                ).strip()
-                proc_pid = int(pgrep_output)
-                is_injection_mode = True
-                logger.info(f"Captured bash PID: {proc_pid}, injection mode: {is_injection_mode}")
-            except (subprocess.CalledProcessError, ValueError) as e:
-                logger.error(f"Failed to capture bash PID: {e}")
-                proc_pid = -1
-        else:
-            if command == "default":
-                command = [
-                    "uvicorn", "app.api_server:app",
-                    "--host", "127.0.0.1",
-                    "--port", "8000",
-                    "--no-access-log"
-                ]
-            elif isinstance(command, str):
-                command = command.split()
+        if proc_pid == -1:
+            if command is None:
+                logger.info(f"User skipped the APP launch.")
+            elif command == "terminal":
+                logger.info(f"Starting terminal session with PTY...")
+                
+                # Use pty.spawn to create a proper PTY for the script command
+                # This ensures bash runs as a proper interactive shell
+                script_pid = os.fork()
+                
+                if script_pid == 0:
+                    # Child process: run script with bash in a PTY
+                    try:
+                        pty.spawn(["script", "-q", "-c", "bash --norc --noprofile", "/dev/null"])
+                    except Exception as e:
+                        logger.error(f"Failed to spawn PTY: {e}")
+                    os._exit(1)
+                else:
+                    # Parent process: wait a bit for bash to start, then capture its PID
+                    time.sleep(2)
 
-            logger.info(f"Starting initial APP...")
-            proc = subprocess.Popen(
-                command,
-                cwd=self._work_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            time.sleep(5)  # wait for app to initialize
-            proc_pid = proc.pid
+                    proc_pid = -1
+                    try:
+                        # Find the script process that is a direct child of this python process
+                        scripts = subprocess.check_output(
+                            ["pgrep", "-P", str(os.getpid()), "script"],
+                            text=True
+                        ).strip().splitlines()
+                    except subprocess.CalledProcessError:
+                        scripts = []
+
+                    for spid in scripts:
+                        try:
+                            bashes = subprocess.check_output(
+                                ["pgrep", "-P", spid, "bash"],
+                                text=True
+                            ).strip().splitlines()
+                            if bashes:
+                                proc_pid = int(bashes[0])
+                                is_injection_mode = True
+                                logger.info(f"Captured bash PID: {proc_pid} (child of script {spid}), injection mode: {is_injection_mode}")
+                                break
+                        except subprocess.CalledProcessError:
+                            continue
+
+                    if proc_pid == -1:
+                        logger.warning("No bash process found under script process.")
+            else:
+                if command == "default":
+                    command = [
+                        "uvicorn", "app.api_server:app",
+                        "--host", "127.0.0.1",
+                        "--port", "8000",
+                        "--no-access-log"
+                    ]
+                elif isinstance(command, str):
+                    command = command.split()
+
+                logger.info(f"Starting initial APP...")
+                proc = subprocess.Popen(
+                    command,
+                    cwd=self._work_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                time.sleep(5)  # wait for app to initialize
+                proc_pid = proc.pid
+        else:
+            logger.info(f"Using provided PID {proc_pid} for checkpointing.")
+            is_injection_mode = True
 
         super().__init__(target_pid=proc_pid, session_id=sid)
 
