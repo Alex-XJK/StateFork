@@ -8,7 +8,9 @@ from decider import RandomDecider, AlwaysTrueDecider, AlwaysFalseDecider, Thresh
 AVAILABLE_COMMANDS = [
     "snapshot",
     "restore <id>",
-    "step",
+    "fork <branch> <snapshot_id>",
+    "checkout <branch>",
+    "branches",
     "cmd <command>",
     "tree",
     "stats",
@@ -137,6 +139,32 @@ def interactive_shell(manager):
                 print("Command input heading turned ON.")
             else:
                 print(f"Unknown config: {config_string}")
+
+        elif cmd.startswith("fork"):
+            parts = cmd.split()
+            if len(parts) != 3:
+                print("Usage: fork <branch_name> <snapshot_id>")
+                continue
+
+            _, branch_name, snapshot_id = parts
+            ok = manager.fork(branch_name, snapshot_id)
+            print(f"Forked branch '{branch_name}' from {snapshot_id}" if ok else "Fork failed.")
+
+        elif cmd.startswith("checkout"):
+            _, _, branch_name = cmd.partition(" ")
+            if not manager.switch_branch(branch_name):
+                print(f"Branch '{branch_name}' not found.")
+                continue
+            print(f"Switched to branch '{branch_name}'")
+
+        elif cmd.startswith("checkout"):
+            _, _, branch_name = cmd.partition(" ")
+            if branch_name not in manager.branches:
+                print(f"Branch '{branch_name}' not found.")
+                continue
+
+            manager.active_branch = branch_name
+            print(f"Switched to branch '{branch_name}'")
 
         else:
             if need_cmd_heading:

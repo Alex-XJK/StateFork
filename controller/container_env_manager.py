@@ -104,8 +104,10 @@ class ContainerAttachManager(EnvironmentManager):
 
         # Init the Tree Graph
         self.snapshot_graph["base"] = SnapshotNode(snapshot_id="base", parent_id=None)
-        self.current_snapshot_id = "base"
-        self.last_snapshot_id = "base"
+
+        # Initialize main branch correctly
+        self.branches["main"].head_snapshot_id = "base"
+        self.branches["main"].container_name = self.container_name
 
         # Attach the ImageCalculator to track image sizes
         ic = ImageCalculator(self.BACKEND_CMD, self.image_prefix)
@@ -140,6 +142,9 @@ class ContainerAttachManager(EnvironmentManager):
         subprocess.run(cmd, stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
 
+        # Update branch container reference
+        self.branches[self.active_branch].container_name = self.container_name
+
         return self.container_name, elapsed
 
     def _core_cleanup(self):
@@ -152,10 +157,16 @@ class ContainerAttachManager(EnvironmentManager):
             del self.snapshots[snapshot_id]
 
     def _core_exec(self, command, timeout=None):
+        branch = self.branches.get(self.active_branch)
+        if not branch or not branch.container_name:
+            raise RuntimeError(f"No active container for branch '{self.active_branch}'")
+
+        container_name = branch.container_name
+
         if isinstance(command, list):
-            cmd = [self.BACKEND_CMD, "exec", self.container_name] + command
+            cmd = [self.BACKEND_CMD, "exec", container_name] + command
         else:
-            cmd = [self.BACKEND_CMD, "exec", self.container_name, "bash", "-c", command]
+            cmd = [self.BACKEND_CMD, "exec", container_name, "bash", "-c", command]
 
         result = subprocess.run(
             cmd,
@@ -165,6 +176,34 @@ class ContainerAttachManager(EnvironmentManager):
         )
 
         return result.returncode, result.stdout, result.stderr
+
+    def _core_fork_env(self, branch_name: str, snapshot_id: str):
+        image_name = self.snapshots.get(snapshot_id)
+        if not image_name:
+            return None, 0.0
+
+        new_container_name = f"statefork_{branch_name}"
+
+        subprocess.run(
+            [self.BACKEND_CMD, "rm", "-f", new_container_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+
+        cmd = [
+            self.BACKEND_CMD,
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            new_container_name,
+        ] + self.extra_args + [image_name]
+
+        start = time.time()
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        elapsed = time.time() - start
+
+        return new_container_name, elapsed
 
 
 class ContainerBuildManager(ContainerAttachManager):

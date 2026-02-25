@@ -8,6 +8,11 @@ from decider import Decider, DecisionContext, AlwaysTrueDecider
 
 logger = logging.getLogger("EnvManager.Base")
 
+@dataclass
+class Branch:
+    name: str
+    head_snapshot_id: str
+    container_name: Optional[str] = None
 
 @dataclass
 class SnapshotNode:
@@ -33,9 +38,9 @@ class EnvironmentManager(ABC):
         self.backend_name = backend_name
         self.snapshots: Dict[str, str] = {}  # snapshot_id -> image_id
         self._stats = BenchmarkStats()
-        self.current_snapshot_id: Optional[str] = None
-        self.last_snapshot_id: Optional[str] = None
         self.snapshot_graph: Dict[str, SnapshotNode] = {}  # snapshot_id -> SnapshotNode
+        self.branches: Dict[str, Branch] = {}  # branch_name -> branch
+        self.active_branch: str = "main"
         self.__tmp_tree_print: str = "" # Temporary variable for tree printing, note this makes it non-thread-safe
         self.is_cleaned_up: bool = False
 
@@ -45,6 +50,13 @@ class EnvironmentManager(ABC):
 
         # cumulative execution time since last generated snapshot
         self._cumulative_exec_time: float = 0.0
+
+        # initialize the first default branch to main and id to None
+        self.branches["main"] = Branch(
+            name="main",
+            head_snapshot_id=None,  # IMPORTANT: matches old "no snapshot yet"
+            container_name=None,            
+        )
 
 
     def __del__(self):
@@ -56,13 +68,12 @@ class EnvironmentManager(ABC):
             logger.info("EnvironmentManager is being deleted, performing cleanup...")
             self.cleanup()
 
-
     def snapshot(self) -> Optional[str]:
         """
         Create a snapshot of the current environment.
         Returns a unique identifier for the snapshot.
         """
-        parent_id = self.last_snapshot_id if self.last_snapshot_id else None
+        parent_id = self.branches[self.active_branch].head_snapshot_id
 
         context = DecisionContext(
             cumulative_exec_time=self._cumulative_exec_time,
@@ -117,9 +128,7 @@ class EnvironmentManager(ABC):
         # Reset command log and time since state is fully tracked
         self._command_log = []
 
-        self.last_snapshot_id = snapshot_id
-        # TODO: figure out here:
-        # self.current_snapshot_id = snapshot_id
+        self.branches[self.active_branch].head_snapshot_id = snapshot_id
 
         self.is_cleaned_up = False
         return snapshot_id
@@ -130,6 +139,50 @@ class EnvironmentManager(ABC):
         Internal method to create a core snapshot.
         Concrete implementations should override this method.
         Returns a unique identifier for the snapshot and the time taken.
+        """
+        pass
+
+    def fork(self, branch_name: str, snapshot_id: str) -> bool:
+        """
+        Create a new branch from a given snapshot.
+        This will spawn a NEW environment (container) without affecting current branch.
+        """
+        if branch_name in self.branches:
+            logger.error(f"Branch '{branch_name}' already exists.")
+            return False
+
+        if snapshot_id not in self.snapshot_graph:
+            logger.error(f"Snapshot '{snapshot_id}' not found.")
+            return False
+
+        # Core: create a NEW environment (parallel container)
+        container_name, elapsed = self._core_fork_env(branch_name, snapshot_id)
+
+        if container_name is None:
+            logger.error(f"Failed to fork environment from snapshot {snapshot_id}")
+            return False
+
+        # Register new branch
+        self.branches[branch_name] = Branch(
+            name=branch_name,
+            head_snapshot_id=snapshot_id,
+            container_name=container_name,
+        )
+
+        self._stats.add_entry("fork", snapshot_id, elapsed)
+        logger.info(
+            f"Forked branch '{branch_name}' from snapshot {snapshot_id} "
+            f"(container={container_name}) in {elapsed:.4f}s"
+        )
+
+        return True
+
+    @abstractmethod
+    def _core_fork_env(self, branch_name: str, snapshot_id: str) -> tuple[Optional[str], float]:
+        """
+        Create a NEW environment (parallel container) from a snapshot.
+        MUST NOT destroy the current container.
+        Returns (container_name, elapsed_time).
         """
         pass
 
@@ -155,8 +208,8 @@ class EnvironmentManager(ABC):
             self._stats.add_entry("restore", snapshot_id, elapsed)
             logger.info(f"Restored physical snapshot {snapshot_id} in {elapsed:.4f}s")
 
-            self.current_snapshot_id = snapshot_id
-            self.last_snapshot_id = snapshot_id
+            # Restore affects ONLY active branch head
+            self.branches[self.active_branch].head_snapshot_id = snapshot_id
             self._command_log = []
             return True
 
@@ -195,8 +248,7 @@ class EnvironmentManager(ABC):
                 if rc != 0:
                     logger.error(f"Replay failed: {cmd}\n{stderr}")
 
-        self.current_snapshot_id = snapshot_id
-        self.last_snapshot_id = snapshot_id
+        self.branches[self.active_branch].head_snapshot_id = snapshot_id
         self._command_log = []
         return True
 
@@ -229,9 +281,6 @@ class EnvironmentManager(ABC):
 
         logger.info(f"Container created from snapshot {snapshot_id} in {elapsed:.4f}s")
 
-        # Update the Tree Graph
-        self.current_snapshot_id = snapshot_id
-
         self.is_cleaned_up = False
         return container_name
 
@@ -243,6 +292,13 @@ class EnvironmentManager(ABC):
         Returns the name of the new container and the time taken.
         """
         pass
+
+    def switch_branch(self, branch_name: str) -> bool:
+        if branch_name not in self.branches:
+            return False
+
+        self.active_branch = branch_name
+        return True
 
     def cleanup(self) -> None:
         """
@@ -277,7 +333,8 @@ class EnvironmentManager(ABC):
             returncode, stdout, stderr = self._core_exec(command=command, timeout=timeout)
         except Exception as e:
             elapsed = time.time() - start
-            self._stats.add_entry("exec", self.current_snapshot or "<none>", elapsed)
+            active_head = self.branches[self.active_branch].head_snapshot_id
+            self._stats.add_entry("exec", active_head, elapsed)
             logger.error(f"Execution failed: {e}")
             # Still record the command
             self._command_log.append(command)
@@ -285,7 +342,8 @@ class EnvironmentManager(ABC):
 
         elapsed = time.time() - start
         self._cumulative_exec_time += elapsed
-        self._stats.add_entry("exec", self.current_snapshot or "<none>", elapsed)
+        active_head = self.branches[self.active_branch].head_snapshot_id
+        self._stats.add_entry("exec", active_head or "<none>", elapsed)
 
         self._command_log.append(command)
 
@@ -311,30 +369,58 @@ class EnvironmentManager(ABC):
 
     def print_snapshot_tree(self) -> str:
         """
-        This method traverses the snapshot graph and formats it for display.
+        This method traverses the snapshot graph and formats it for display. It will
+        also print the annotated branch heads.
         Special Notes: This is NOT thread-safe due to the use of a temporary variable.
         :return: str representation of the snapshot tree.
         """
         self.__tmp_tree_print = ""
 
+        # Build reverse mapping: snapshot_id -> [branch names]
+        branch_heads: Dict[str, List[str]] = {}
+        for branch in self.branches.values():
+            if branch.head_snapshot_id:
+                branch_heads.setdefault(branch.head_snapshot_id, []).append(branch.name)
+
         def recurse(sid: str, indent: str = " "):
-            if sid == self.current_snapshot_id:
-                self.__tmp_tree_print += f"{indent}- {sid} (current)\n"
-            elif sid == self.last_snapshot_id:
-                self.__tmp_tree_print += f"{indent}- {sid} (last)\n"
-            else:
-                self.__tmp_tree_print += f"{indent}- {sid}\n"
+            head_annotation = ""
+            if sid in branch_heads:
+                labels = []
+                for b in branch_heads[sid]:
+                    if b == self.active_branch:
+                        labels.append(f"{b}*")
+                    else:
+                        labels.append(b)
+                head_annotation = f" [head: {', '.join(labels)}]"
+
+            self.__tmp_tree_print += f"{indent}- {sid}{head_annotation}\n"
+
             for child in self.snapshot_graph[sid].children:
                 recurse(child, indent + "  ")
 
         roots = [sid for sid, node in self.snapshot_graph.items() if node.parent_id is None]
+
         if not roots:
             return "No snapshot tree available.\n"
 
         self.__tmp_tree_print += "Snapshot Tree:\n"
         for root in roots:
             recurse(root)
+
         return self.__tmp_tree_print
+
+    def print_branches(self) -> str:
+        """
+        Print all branches and their head snapshot + container info.
+        """
+        lines = ["Branches:"]
+        for name, branch in self.branches.items():
+            marker = "*" if name == self.active_branch else " "
+            lines.append(
+                f" {marker} {name} -> head: {branch.head_snapshot_id}, "
+                f"container: {branch.container_name}"
+            )
+        return "\n".join(lines) + "\n"
 
     @property
     def current_snapshot(self) -> Optional[str]:
@@ -342,7 +428,8 @@ class EnvironmentManager(ABC):
         Get the current snapshot ID.
         Returns None if no snapshot has been created.
         """
-        return self.current_snapshot_id
+        branch = self.branches.get(self.active_branch)
+        return branch.head_snapshot_id if branch else None
 
     @property
     def backend(self) -> str:
