@@ -14,6 +14,11 @@ class Branch:
     head_snapshot_id: str
     container_name: Optional[str] = None
 
+    # branch-local runtime state (Command log and cumulative
+    # execution time since last generated snapshotl)
+    command_log: List[List[str] | str] = field(default_factory=list)
+    cumulative_exec_time: float = 0.0
+
 @dataclass
 class SnapshotNode:
     snapshot_id: str
@@ -43,13 +48,7 @@ class EnvironmentManager(ABC):
         self.active_branch: str = "main"
         self.__tmp_tree_print: str = "" # Temporary variable for tree printing, note this makes it non-thread-safe
         self.is_cleaned_up: bool = False
-
-        # Command log since last generated snapshot
-        self._command_log: List[List[str] | str] = []
         self.decider: Decider = decider if decider is not None else AlwaysTrueDecider()
-
-        # cumulative execution time since last generated snapshot
-        self._cumulative_exec_time: float = 0.0
 
         # initialize the first default branch to main and id to None
         self.branches["main"] = Branch(
@@ -73,10 +72,11 @@ class EnvironmentManager(ABC):
         Create a snapshot of the current environment.
         Returns a unique identifier for the snapshot.
         """
-        parent_id = self.branches[self.active_branch].head_snapshot_id
+        branch = self.branches[self.active_branch]
+        parent_id = branch.head_snapshot_id
 
         context = DecisionContext(
-            cumulative_exec_time=self._cumulative_exec_time,
+            cumulative_exec_time=branch.cumulative_exec_time,
         )
         take_physical = self.decider.decide(context)
 
@@ -104,7 +104,7 @@ class EnvironmentManager(ABC):
             # Clean the cumulative execution time; Do not clean this in
             # virtual node because time is still need to go through that
             # virtual node in restore
-            self._cumulative_exec_time = 0.0
+            branch.cumulative_exec_time = 0.0 
 
         else:
             # ===== Virtual Snapshot =====
@@ -116,7 +116,7 @@ class EnvironmentManager(ABC):
                 snapshot_id=snapshot_id,
                 parent_id=parent_id,
                 is_virtual=True,
-                replay_commands=list(self._command_log),
+                replay_commands=list(branch.command_log),
             )
 
         # ===== Graph Update =====
@@ -126,9 +126,9 @@ class EnvironmentManager(ABC):
             parent_node.children.append(snapshot_id)
 
         # Reset command log and time since state is fully tracked
-        self._command_log = []
+        branch.command_log.clear()
 
-        self.branches[self.active_branch].head_snapshot_id = snapshot_id
+        branch.head_snapshot_id = snapshot_id
 
         self.is_cleaned_up = False
         return snapshot_id
@@ -196,6 +196,7 @@ class EnvironmentManager(ABC):
             return False
 
         node = self.snapshot_graph[snapshot_id]
+        branch = self.branches[self.active_branch]
 
         # ===== Case 1: Physical =====
         if not node.is_virtual:
@@ -209,8 +210,8 @@ class EnvironmentManager(ABC):
             logger.info(f"Restored physical snapshot {snapshot_id} in {elapsed:.4f}s")
 
             # Restore affects ONLY active branch head
-            self.branches[self.active_branch].head_snapshot_id = snapshot_id
-            self._command_log = []
+            branch.head_snapshot_id = snapshot_id
+            branch.command_log.clear()
             return True
 
         # ===== Case 2: Virtual =====
@@ -248,8 +249,8 @@ class EnvironmentManager(ABC):
                 if rc != 0:
                     logger.error(f"Replay failed: {cmd}\n{stderr}")
 
-        self.branches[self.active_branch].head_snapshot_id = snapshot_id
-        self._command_log = []
+        branch.head_snapshot_id = snapshot_id
+        branch.command_log.clear()
         return True
 
     def _core_restore(self, snapshot_id: str) -> tuple[bool, float]:
@@ -327,25 +328,27 @@ class EnvironmentManager(ABC):
         - `command` may be a list of args or a raw shell string.
         - `timeout` in seconds (optional).
         """
+        branch = self.branches[self.active_branch]
         start = time.time()
 
         try:
             returncode, stdout, stderr = self._core_exec(command=command, timeout=timeout)
         except Exception as e:
             elapsed = time.time() - start
-            active_head = self.branches[self.active_branch].head_snapshot_id
+            active_head = branch.head_snapshot_id
             self._stats.add_entry("exec", active_head, elapsed)
             logger.error(f"Execution failed: {e}")
             # Still record the command
-            self._command_log.append(command)
+            branch.command_log.append(command)
+            branch.cumulative_exec_time += elapsed
             return -1, "", str(e)
 
         elapsed = time.time() - start
-        self._cumulative_exec_time += elapsed
-        active_head = self.branches[self.active_branch].head_snapshot_id
+        branch.cumulative_exec_time += elapsed
+        active_head = branch.head_snapshot_id
         self._stats.add_entry("exec", active_head or "<none>", elapsed)
 
-        self._command_log.append(command)
+        branch.command_log.append(command)
 
         logger.info(f"Exec finished (rc={returncode}) in {elapsed:.4f}s")
         return returncode, stdout, stderr
