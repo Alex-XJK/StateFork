@@ -114,6 +114,9 @@ def interactive_shell(manager):
         elif cmd == "stats":
             print(manager.stats.print_stats())
 
+        elif cmd == "branches":
+            print(manager.print_branches())
+
         elif cmd == "history":
             print(manager.stats.print_history())
 
@@ -155,15 +158,6 @@ def interactive_shell(manager):
             if not manager.switch_branch(branch_name):
                 print(f"Branch '{branch_name}' not found.")
                 continue
-            print(f"Switched to branch '{branch_name}'")
-
-        elif cmd.startswith("checkout"):
-            _, _, branch_name = cmd.partition(" ")
-            if branch_name not in manager.branches:
-                print(f"Branch '{branch_name}' not found.")
-                continue
-
-            manager.active_branch = branch_name
             print(f"Switched to branch '{branch_name}'")
 
         else:
