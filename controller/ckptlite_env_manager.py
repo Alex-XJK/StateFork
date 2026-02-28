@@ -61,11 +61,12 @@ class CkptCalculator(Calculator):
                 data.append((name, size))
         return data
 
+PID_NOT_PROVIDED = -2
+
 class CheckpointLiteAttachManager(EnvironmentManager):
     """
     CheckpointLiteAttachManager is a specialized Checkpoint-lite EnvironmentManager that attaches to an existing session.
     """
-    PID_NOT_PROVIDED = -2
 
     def __init__(self,
                  session_id: str,
@@ -187,6 +188,7 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
             target_dir = os.path.abspath(dockerfile_dir)
 
         logger.info("Creating a new Checkpoint-lite session...")
+        pid = PID_NOT_PROVIDED
         if not build:
             init_process = subprocess.run(
                 ["./checkpoint-lite", "init", target_dir, "--quiet"],
@@ -212,13 +214,13 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
 
             output = init_process.stdout.strip()
             try:
-                sid, self._work_dir, _ = output.split(",", 2)
+                sid, self._work_dir, pid = output.split(",", 2)
             except ValueError:
                 raise RuntimeError(f"Unexpected output format: {output}")
 
         logger.info(f"New session {sid} with work directory '{self._work_dir}' created.")
 
-        super().__init__(session_id=sid, decider=decider)
+        super().__init__(session_id=sid, decider=decider, target_pid=pid)
 
         # Attach the new CkptCalculator to this session
         base_dir = os.path.join(self._work_dir, "../")
