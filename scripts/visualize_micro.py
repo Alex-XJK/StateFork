@@ -57,6 +57,7 @@ def _parse_rows(csv_path: str) -> List[dict]:
 				r["mem_mb"] = int(r.get("mem_mb", 0) or 0)
 				r["fs_init_mb"] = int(r.get("fs_init_mb", 0) or 0)
 				r["fs_delta_mb"] = int(r.get("fs_delta_mb", 0) or 0)
+				r["pair_idx"] = int(r.get("pair_idx", 0) or 0)
 				r["elapsed_ms"] = float(r.get("elapsed_ms", 0.0) or 0.0)
 				r["operation"] = (r.get("operation", "") or "").strip().upper()
 			except Exception:
@@ -155,6 +156,50 @@ def _aggregate_fsinit_only(rows: List[dict]) -> Tuple[List[float], Dict[float, D
 	return x_vals, stats_by_x
 
 
+def _aggregate_fs_growth(rows: List[dict]) -> Dict[Tuple[int, int], Tuple[List[float], Dict[float, Dict[str, float]]]]:
+	"""Aggregate for scenarios where mem_mb == 0 and filesystem grows: multiple configs (fs_init_mb, fs_delta_mb).
+
+	For each config, we group by effective size x = fs_init_mb + fs_delta_mb * pair_idx, and collect
+	SNAPSHOT times across repeats, then compute median/IQR/min/max.
+	"""
+	# Map: (fs_init, fs_delta) -> x_value -> list(times)
+	series: Dict[Tuple[int, int], Dict[float, List[float]]] = defaultdict(lambda: defaultdict(list))
+
+	for r in rows:
+		mem_mb = r["mem_mb"]
+		fs_init_mb = r["fs_init_mb"]
+		fs_delta_mb = r["fs_delta_mb"]
+		pair_idx = r.get("pair_idx", 0)
+		op = r["operation"]
+		val = r["elapsed_ms"]
+
+		# Growth cases: mem=0, fs_delta>0, use SNAPSHOT entries
+		if mem_mb == 0 and fs_delta_mb > 0 and op == "SNAPSHOT":
+			x_val = float(fs_init_mb + fs_delta_mb * pair_idx)
+			series[(fs_init_mb, fs_delta_mb)][x_val].append(val)
+
+	# Build stats per config
+	result: Dict[Tuple[int, int], Tuple[List[float], Dict[float, Dict[str, float]]]] = {}
+	for key, x_map in series.items():
+		xs = sorted(x_map.keys())
+		stats_map: Dict[float, Dict[str, float]] = {}
+		for x in xs:
+			y = np.asarray(x_map[x], dtype=float)
+			q1, q3 = np.quantile(y, [0.25, 0.75])
+			stats_map[x] = {
+				"count": float(y.size),
+				"mean": float(np.mean(y)),
+				"median": float(np.median(y)),
+				"min": float(np.min(y)),
+				"q1": float(q1),
+				"q3": float(q3),
+				"max": float(np.max(y)),
+			}
+		result[key] = (xs, stats_map)
+
+	return result
+
+
 def _plot_distribution_with_mean(
 	ax: plt.Axes,
 	xs: List[float],
@@ -232,11 +277,14 @@ def main():
 	# Aggregate datasets
 	mem_xs, mem_stats = _aggregate_mem_only(rows)
 	fs_xs, fs_stats = _aggregate_fsinit_only(rows)
+	fs_growth = _aggregate_fs_growth(rows)
 
 	if not mem_xs:
 		print("Warning: no mem-only dataset found (fs_init_mb=0, fs_delta_mb=0)")
 	if not fs_xs:
 		print("Warning: no fsInit-only dataset found (mem_mb=0, fs_delta_mb=0, fs_init_mb>0)")
+	if not fs_growth:
+		print("Warning: no fsGrowth-only dataset found (mem_mb=0, fs_delta_mb>0)")
 
 	# Prepare output directory
 	if args.outdir is None:
@@ -284,6 +332,34 @@ def main():
 		fig2.tight_layout()
 		fig2.savefig(fs_out, dpi=160)
 		print(f"Saved: {fs_out}")
+
+	# Figure 3: fsGrowth-only (x = fs_init_mb + fs_delta_mb * pair_idx)
+	if fs_growth:
+		fig3, ax3 = plt.subplots(figsize=(9.6, 5.4))
+		# cycle colors for multiple configs
+		color_cycle = [
+			"tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
+			"tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan",
+		]
+		ci = 0
+		for (fs_init_mb, fs_delta_mb), (xs, stats_map) in sorted(fs_growth.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+			color = color_cycle[ci % len(color_cycle)]
+			label = f"{fs_init_mb} + N * {fs_delta_mb}MB"
+			_plot_distribution_with_mean(
+				ax3,
+				xs,
+				stats_map,
+				color=color,
+				label=label,
+				x_label="Env size (MB) = fs_init_mb + fs_delta_mb * pair_idx",
+			)
+			ci += 1
+		ax3.set_title("Snapshot time vs evolving filesystem size (fsGrowth-only)")
+		ax3.legend(loc="best", ncol=2)
+		growth_out = os.path.join(outdir, "micro_fsgrowth_only.png")
+		fig3.tight_layout()
+		fig3.savefig(growth_out, dpi=160)
+		print(f"Saved: {growth_out}")
 
 	if args.show:
 		plt.show()
