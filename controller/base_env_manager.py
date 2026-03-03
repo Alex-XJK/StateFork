@@ -209,47 +209,44 @@ class EnvironmentManager(ABC):
         # Temporarily switch active branch for correct container routing
         old_active = self.active_branch
         self.active_branch = branch_name
+        try:
+            # Create environment from physical ancestor
+            container_name, _ = self._core_create_env(physical_ancestor.snapshot_id)
 
-        # Create environment from physical ancestor
-        start = time.time()
-        container_name, _ = self._core_create_env(physical_ancestor.snapshot_id)
-        elapsed = time.time() - start
+            if container_name is None:
+                self.active_branch = old_active
+                del self.branches[branch_name]
+                logger.error("Failed to create environment from physical ancestor.")
+                return False
 
-        if container_name is None:
+            # Replay virtual chain (forward order)
+            replay_chain.reverse()
+            for virtual_node in replay_chain:
+                for cmd in virtual_node.replay_commands:
+                    rc, _, stderr = self.exec_command(cmd)
+                    if rc != 0:
+                        logger.error(f"Replay failed during fork: {cmd}\n{stderr}")
+                        # rollback branch registration
+                        self.active_branch = old_active
+                        del self.branches[branch_name]
+                        return False
+
+            #  Finalize branch state
+            new_branch.head_snapshot_id = snapshot_id
+            new_branch.command_log.clear()
+            new_branch.cumulative_exec_time = 0.0
+            self.is_cleaned_up = False
+
+            self._stats.add_entry("fork", snapshot_id, elapsed)
+            logger.info(
+                f"Forked branch '{branch_name}' from virtual snapshot {snapshot_id} "
+                f"(container={container_name}) in {elapsed:.4f}s"
+            )
+            return True
+        
+        finally:
+            # Restore original active branch
             self.active_branch = old_active
-            del self.branches[branch_name]
-            logger.error("Failed to create environment from physical ancestor.")
-            return False
-
-        # Replay virtual chain (forward order)
-        replay_chain.reverse()
-
-        for virtual_node in replay_chain:
-            for cmd in virtual_node.replay_commands:
-                rc, _, stderr = self._core_exec(command=cmd, timeout=None)
-                if rc != 0:
-                    logger.error(f"Replay failed during fork: {cmd}\n{stderr}")
-                    # rollback branch registration
-                    self.active_branch = old_active
-                    del self.branches[branch_name]
-                    return False
-
-        #  Finalize branch state
-        new_branch.head_snapshot_id = snapshot_id
-        new_branch.command_log.clear()
-        new_branch.cumulative_exec_time = 0.0
-
-        # Restore original active branch
-        self.active_branch = old_active
-
-        self._stats.add_entry("fork", snapshot_id, elapsed)
-
-        logger.info(
-            f"Forked branch '{branch_name}' from virtual snapshot {snapshot_id} "
-            f"(container={container_name}) in {elapsed:.4f}s"
-        )
-
-        return True
 
     @abstractmethod
     def _core_fork_env(self, branch_name: str, snapshot_id: str) -> tuple[Optional[str], float]:
@@ -333,9 +330,7 @@ class EnvironmentManager(ABC):
         Here provide a default implementation that can be overridden by concrete managers.
         Returns True if successful, False otherwise and the time taken.
         """
-        start = time.time()
-        result, _ = self._core_create_env(snapshot_id)
-        elapsed = time.time() - start
+        result, elapsed = self._core_create_env(snapshot_id)
 
         return result is not None, elapsed
 
