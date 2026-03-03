@@ -155,23 +155,97 @@ class EnvironmentManager(ABC):
             logger.error(f"Snapshot '{snapshot_id}' not found.")
             return False
 
-        # Core: create a NEW environment (parallel container)
-        container_name, elapsed = self._core_fork_env(branch_name, snapshot_id)
+        node = self.snapshot_graph[snapshot_id]
+
+        # ===== Case 1: Physical =====
+        if not node.is_virtual:
+            # Core: create a NEW environment (parallel container)
+            container_name, elapsed = self._core_fork_env(branch_name, snapshot_id)
+
+            if container_name is None:
+                logger.error(f"Failed to fork environment from snapshot {snapshot_id}")
+                return False
+
+            # Register new branch
+            self.branches[branch_name] = Branch(
+                name=branch_name,
+                head_snapshot_id=snapshot_id,
+                container_name=container_name,
+            )
+
+            self._stats.add_entry("fork", snapshot_id, elapsed)
+            logger.info(
+                f"Forked branch '{branch_name}' from snapshot {snapshot_id} "
+                f"(container={container_name}) in {elapsed:.4f}s"
+            )
+            return True
+        
+        # ===== Case 2: Virtual =====
+        logger.info(f"Forking from virtual snapshot {snapshot_id}")
+
+        replay_chain = []
+        current = node
+
+        # Walk upward collecting virtual nodes
+        while current.is_virtual:
+            replay_chain.append(current)
+
+            if current.parent_id is None:
+                logger.error("Virtual snapshot has no physical ancestor.")
+                return False
+
+            current = self.snapshot_graph[current.parent_id]
+
+        physical_ancestor = current  # must be physical
+
+        # Register branch EARLY (so backend knows container context)
+        new_branch = Branch(
+            name=branch_name,
+            head_snapshot_id=None,  # temporary during replay
+            container_name=f"statefork_{branch_name}",
+        )
+        self.branches[branch_name] = new_branch
+
+        # Temporarily switch active branch for correct container routing
+        old_active = self.active_branch
+        self.active_branch = branch_name
+
+        # Create environment from physical ancestor
+        start = time.time()
+        container_name, _ = self._core_create_env(physical_ancestor.snapshot_id)
+        elapsed = time.time() - start
 
         if container_name is None:
-            logger.error(f"Failed to fork environment from snapshot {snapshot_id}")
+            self.active_branch = old_active
+            del self.branches[branch_name]
+            logger.error("Failed to create environment from physical ancestor.")
             return False
 
-        # Register new branch
-        self.branches[branch_name] = Branch(
-            name=branch_name,
-            head_snapshot_id=snapshot_id,
-            container_name=container_name,
-        )
+        # Replay virtual chain (forward order)
+        replay_chain.reverse()
+
+        for virtual_node in replay_chain:
+            for cmd in virtual_node.replay_commands:
+                rc, _, stderr = self._core_exec(command=cmd, timeout=None)
+                if rc != 0:
+                    logger.error(f"Replay failed during fork: {cmd}\n{stderr}")
+                    # rollback branch registration
+                    self.active_branch = old_active
+                    del self.branches[branch_name]
+                    return False
+
+        #  Finalize branch state
+        new_branch.head_snapshot_id = snapshot_id
+        new_branch.command_log.clear()
+        new_branch.cumulative_exec_time = 0.0
+
+        # Restore original active branch
+        self.active_branch = old_active
 
         self._stats.add_entry("fork", snapshot_id, elapsed)
+
         logger.info(
-            f"Forked branch '{branch_name}' from snapshot {snapshot_id} "
+            f"Forked branch '{branch_name}' from virtual snapshot {snapshot_id} "
             f"(container={container_name}) in {elapsed:.4f}s"
         )
 

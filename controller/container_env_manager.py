@@ -165,8 +165,16 @@ class ContainerAttachManager(EnvironmentManager):
             stderr=subprocess.DEVNULL
         )
 
-        cmd = [self.BACKEND_CMD, "run", "-d", "--rm", "--name", container] + self.extra_args + [image_name]
-        self.logger.debug(f"Launching container with command: {' '.join(cmd)}")
+        # Strip port bindings from extra_args: forked containers run in parallel
+        # alongside the main container so reusing the same ports would cause
+        # "port already allocated" errors.
+        filtered_args = []
+        if self.active_branch == "main":
+            filtered_args = list(self.extra_args)
+        else:
+            filtered_args = self._strip_port_args(self.extra_args)
+
+        cmd = [self.BACKEND_CMD, "run", "-d", "--rm", "--name", container] + filtered_args + [image_name]
 
         start = time.time()
         try:
@@ -196,23 +204,9 @@ class ContainerAttachManager(EnvironmentManager):
         # Strip port bindings from extra_args: forked containers run in parallel
         # alongside the main container so reusing the same ports would cause
         # "port already allocated" errors.
-        filtered_args = []
-        skip_next = False
-        for arg in self.extra_args:
-            if skip_next:
-                skip_next = False
-                continue
-            if arg == "-p":
-                skip_next = True
-                continue
-            if arg.startswith("-p"):
-                continue
-            filtered_args.append(arg)
+        filtered_args = self._strip_port_args(self.extra_args)
 
-        cmd = [
-            self.BACKEND_CMD, "run", "-d", "--rm",
-            "--name", container_name
-        ] + filtered_args + [image_name]
+        cmd = [self.BACKEND_CMD, "run", "-d", "--rm", "--name", container_name] + filtered_args + [image_name]
         self.logger.debug(f"Forking container with command: {' '.join(cmd)}")
 
         start = time.time()
@@ -269,6 +263,26 @@ class ContainerAttachManager(EnvironmentManager):
                 stderr=subprocess.DEVNULL
             )
         self.snapshots.clear()
+
+    def _strip_port_args(self, args: list[str]) -> list[str]:
+        filtered = []
+        skip_next = False
+
+        for arg in args:
+            if skip_next:
+                skip_next = False
+                continue
+
+            if arg in ("-p", "--publish"):
+                skip_next = True
+                continue
+
+            if arg.startswith("-p=") or arg.startswith("--publish="):
+                continue
+
+            filtered.append(arg)
+
+        return filtered
 
 
 class ContainerBuildManager(ContainerAttachManager):
