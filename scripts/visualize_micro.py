@@ -37,12 +37,22 @@ REF_DATA = {
             (0.0, 524.0),
             (1024.0, 2897.0),
             (2048.0, 5239.0),
+			(4096.0, 8477.5),
         ],
         "CRIU": [
             (0.0, 54.0),
             (1024.0, 718.0),
             (2048.0, 1371.0),
+			(4096.0, 2653.4),
         ]
+	},
+	"mem_fs": {
+		"Podman-Hybrid": [
+			(0.0, 524.0),
+			(256.0, 3612.5),
+			(512.0, 5286.4),
+			(1024.0, 8844.0),
+		],
 	},
 }
 
@@ -200,7 +210,49 @@ def _aggregate_fs_growth(rows: List[dict]) -> Dict[Tuple[int, int], Tuple[List[f
 	return result
 
 
-def _plot_distribution_with_mean(
+def _aggregate_mem_fs_equal(rows: List[dict]) -> Tuple[List[float], Dict[float, Dict[str, float]]]:
+	"""Aggregate scenarios where mem_mb == fs_init_mb and fs_delta_mb == 0.
+
+	Groups by size (MB), collecting SNAPSHOT times across repeats and pairs, then
+	computes median/IQR/min/max.
+	"""
+	samples_by_size: Dict[int, List[float]] = defaultdict(list)
+
+	for r in rows:
+		mem_mb = r["mem_mb"]
+		fs_init_mb = r["fs_init_mb"]
+		fs_delta_mb = r["fs_delta_mb"]
+		op = r["operation"]
+		val = r["elapsed_ms"]
+
+		if op == "SNAPSHOT" and fs_delta_mb == 0 and mem_mb == fs_init_mb:
+			samples_by_size[mem_mb].append(val)
+
+	xs: List[float] = []
+	stats_by_x: Dict[float, Dict[str, float]] = {}
+
+	for size_mb, ys in samples_by_size.items():
+		if not ys:
+			continue
+		y = np.asarray(ys, dtype=float)
+		q1, q3 = np.quantile(y, [0.25, 0.75])
+		stats = {
+			"count": float(y.size),
+			"mean": float(np.mean(y)),
+			"median": float(np.median(y)),
+			"min": float(np.min(y)),
+			"q1": float(q1),
+			"q3": float(q3),
+			"max": float(np.max(y)),
+		}
+		xs.append(float(size_mb))
+		stats_by_x[float(size_mb)] = stats
+
+	xs.sort()
+	return xs, stats_by_x
+
+
+def _plot_distribution_with_median(
 	ax: plt.Axes,
 	xs: List[float],
 	stats_by_x: Dict[float, Dict[str, float]],
@@ -262,6 +314,25 @@ def _plot_reference_lines(
 		ax.plot(xs, ys, linestyle=linestyle, linewidth=1.5, alpha=alpha, color=color, label=name)
 
 
+def _plot_line_only(
+	ax: plt.Axes,
+	xs: List[float],
+	stats_by_x: Dict[float, Dict[str, float]],
+	color: str,
+	label: str,
+	x_label: str,
+	linewidth: float = 1.6,
+	alpha: float = 0.95,
+):
+	if not xs:
+		return
+	medians = [stats_by_x[x]["median"] for x in xs]
+	ax.plot(xs, medians, color=color, linewidth=linewidth, alpha=alpha, label=label)
+	ax.set_xlabel(x_label)
+	ax.set_ylabel("Snapshot time (ms)")
+	ax.grid(True, axis="y", linestyle=":", alpha=0.45)
+
+
 def main():
 	parser = argparse.ArgumentParser(description="Visualize microbenchmark results (mem-only and fsInit-only)")
 	default_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "micro.csv"))
@@ -278,6 +349,7 @@ def main():
 	mem_xs, mem_stats = _aggregate_mem_only(rows)
 	fs_xs, fs_stats = _aggregate_fsinit_only(rows)
 	fs_growth = _aggregate_fs_growth(rows)
+	memfs_xs, memfs_stats = _aggregate_mem_fs_equal(rows)
 
 	if not mem_xs:
 		print("Warning: no mem-only dataset found (fs_init_mb=0, fs_delta_mb=0)")
@@ -296,7 +368,7 @@ def main():
 	# Figure 1: mem-only (x = average VmRSS MB)
 	if mem_xs:
 		fig1, ax1 = plt.subplots(figsize=(9, 5.2))
-		_plot_distribution_with_mean(
+		_plot_distribution_with_median(
 			ax1,
 			mem_xs,
 			mem_stats,
@@ -316,7 +388,7 @@ def main():
 	# Figure 2: fsInit-only (x = fs_init_mb)
 	if fs_xs:
 		fig2, ax2 = plt.subplots(figsize=(9, 5.2))
-		_plot_distribution_with_mean(
+		_plot_distribution_with_median(
 			ax2,
 			fs_xs,
 			fs_stats,
@@ -345,7 +417,7 @@ def main():
 		for (fs_init_mb, fs_delta_mb), (xs, stats_map) in sorted(fs_growth.items(), key=lambda kv: (kv[0][0], kv[0][1])):
 			color = color_cycle[ci % len(color_cycle)]
 			label = f"{fs_init_mb} + N * {fs_delta_mb}MB"
-			_plot_distribution_with_mean(
+			_plot_distribution_with_median(
 				ax3,
 				xs,
 				stats_map,
@@ -360,6 +432,26 @@ def main():
 		fig3.tight_layout()
 		fig3.savefig(growth_out, dpi=160)
 		print(f"Saved: {growth_out}")
+
+	# Figure 4: mem==fs (delta=0) (x = size MB)
+	if memfs_xs:
+		fig4, ax4 = plt.subplots(figsize=(9, 5.2))
+		_plot_distribution_with_median(
+			ax4,
+			memfs_xs,
+			memfs_stats,
+			color="tab:cyan",
+			label="mem==fs (delta=0)",
+			x_label="Size (MB) where mem_mb == fs_init_mb and fs_delta_mb == 0",
+		)
+		# Overlay reference lines for mem_fs (if any)
+		_plot_reference_lines(ax4, REF_DATA.get("mem_fs", {}))
+		ax4.set_title("Snapshot time vs size when memory equals filesystem (mem_fs)")
+		ax4.legend(loc="best")
+		memfs_out = os.path.join(outdir, "micro_mem_fs.png")
+		fig4.tight_layout()
+		fig4.savefig(memfs_out, dpi=160)
+		print(f"Saved: {memfs_out}")
 
 	if args.show:
 		plt.show()
