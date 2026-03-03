@@ -211,7 +211,7 @@ class EnvironmentManager(ABC):
         self.active_branch = branch_name
         try:
             # Create environment from physical ancestor
-            container_name, _ = self._core_create_env(physical_ancestor.snapshot_id)
+            container_name, elapsed = self._core_create_env(physical_ancestor.snapshot_id)
 
             if container_name is None:
                 self.active_branch = old_active
