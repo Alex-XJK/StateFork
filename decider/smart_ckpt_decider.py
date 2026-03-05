@@ -85,4 +85,4 @@ class SmartCheckpointDecider(Decider):
         #  etc.
 
         # Convert back to "X kB" string format to match original return type
-        return {key: f"{val} kB" for key, val in totals.items()}
+        return {key: val for key, val in totals.items()}
