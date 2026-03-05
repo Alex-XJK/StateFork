@@ -21,7 +21,7 @@ class SmartCheckpointDecider(Decider):
     @staticmethod
     def __get_memory_usage_repr(pid: int) -> dict[str, str]| None:
         """
-        Get memory usage stats for a given PID by reading from /proc/[pid]/status.
+        Get memory usage stats for a given PID with all its children by reading from /proc/[pid]/status.
         This method extracts relevant memory usage fields which can be used as features for the prediction model.
 
         :param pid: the process ID to get memory usage stats for
@@ -30,17 +30,59 @@ class SmartCheckpointDecider(Decider):
         if pid <= 0:
             return None
 
-        stats = {}
-        proc_path = f"/proc/{pid}/status"
-        with open(proc_path, "r") as f:
-            for line in f:
-                # TODO: Consider which field to use for better prediction.
-                #  VmSize is the total virtual memory,
-                #  VmRSS is the resident set size (actual physical memory used),
-                #  VmPeak is the peak virtual memory usage, and
-                #  etc.
-                if line.startswith("VmSize:") or line.startswith("VmRSS:") or line.startswith("VmPeak:"):
-                    key, val = line.strip().split(":", 1)
-                    stats[key] = val.strip()
+        def get_children(ppid: int) -> list[int]:
+            """
+            Recursively get all descendant PIDs of a given parent PID.
+            """
+            children = []
+            try:
+                task_children_path = f"/proc/{ppid}/task/{ppid}/children"
+                with open(task_children_path, "r") as f:
+                    child_pids = f.read().split()
+                for child_pid in child_pids:
+                    child_pid = int(child_pid)
+                    children.append(child_pid)
+                    children.extend(get_children(child_pid))
+            except (FileNotFoundError, ProcessLookupError):
+                # Process may have exited between discovery and reading
+                pass
+            return children
 
-        return stats
+        def read_vm_fields(target_pid: int) -> dict[str, int]:
+            """
+            Read the relevant VmSize, VmRSS, VmPeak fields from /proc/[pid]/status.
+            Returns values in kB as integers, or empty dict if process is gone.
+            """
+            fields = {}
+            try:
+                with open(f"/proc/{target_pid}/status", "r") as f:
+                    for line in f:
+                        if line.startswith("VmSize:") or line.startswith("VmRSS:") or line.startswith("VmPeak:"):
+                            key, val = line.strip().split(":", 1)
+                            # val is like "51524 kB" — extract the integer part
+                            fields[key] = int(val.strip().split()[0])
+            except (FileNotFoundError, ProcessLookupError):
+                # Process may have exited between discovery and reading
+                pass
+            return fields
+
+        # Collect all PIDs: the process itself and all descendants
+        all_pids = [pid] + get_children(pid)
+
+        # Sum each field across all PIDs
+        totals: dict[str, int] = {}
+        for p in all_pids:
+            for key, val in read_vm_fields(p).items():
+                totals[key] = totals.get(key, 0) + val
+
+        if not totals:
+            return None
+
+        # TODO: Consider which field to use for better prediction.
+        #  VmSize is the total virtual memory,
+        #  VmRSS is the resident set size (actual physical memory used),
+        #  VmPeak is the peak virtual memory usage, and
+        #  etc.
+
+        # Convert back to "X kB" string format to match original return type
+        return {key: f"{val} kB" for key, val in totals.items()}
