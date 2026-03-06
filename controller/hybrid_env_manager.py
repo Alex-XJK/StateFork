@@ -1,5 +1,7 @@
 import os
 import subprocess
+import tarfile
+import tempfile
 import time
 import uuid
 import shutil
@@ -28,8 +30,6 @@ class HybridAttachManager(EnvironmentManager):
         self.container_name = container_name
         self.export_dir = export_dir
         os.makedirs(self.export_dir, exist_ok=True)
-        # Map snapshot_id -> committed image tag to preserve rootfs
-        self.snapshot_images: dict[str, str] = {}
 
         logger.info(f"Initializing HybridAttachManager with container '{self.container_name}'")
 
@@ -49,107 +49,177 @@ class HybridAttachManager(EnvironmentManager):
         # Attach the FileSizeCalculator to the export directory
         self._stats.attach_size_calculator(FileSizeCalculator(self.export_dir))
 
-
     def __ensure_container_running(self):
         result = subprocess.run(["podman", "ps", "-q", "-f", f"name={self.container_name}"], capture_output=True, text=True)
         if not result.stdout.strip():
             raise RuntimeError(f"Container '{self.container_name}' is not running. Please start it before using this manager.")
         logger.debug(f"Pass validation: Container '{self.container_name}' is running.")
 
+    def _resolve_pod_args(self) -> list[str]:
+        """Return ['--pod', '<id>'] if the container belongs to a known pod, else []."""
+        guessed_pod_name = f"pod_{self.container_name}"
+        try:
+            insp = subprocess.run(
+                ["podman", "pod", "inspect", guessed_pod_name, "--format", "{{.Id}}"],
+                capture_output=True, text=True, check=False,
+            )
+            pod_id = (insp.stdout or "").strip()
+            if pod_id:
+                return ["--pod", pod_id]
+        except Exception:
+            pass
+        return []
+
+    def _get_upper_dir(self) -> Optional[str]:
+        """Return the overlay UpperDir path for the current container."""
+        try:
+            result = subprocess.run(
+                ["podman", "inspect", self.container_name,
+                 "--format", '{{index .GraphDriver.Data "UpperDir"}}'],
+                capture_output=True, text=True, check=True,
+            )
+            upper = result.stdout.strip()
+            return upper if upper else None
+        except Exception:
+            return None
+
+    _ROOTFS_EXCLUDE = ("run/", "etc/hostname", "etc/hosts",
+                       "etc/resolv.conf", "etc/mtab", "dev/")
+
+    @classmethod
+    def _fix_rootfs_diff_in_export(cls, export_path: str, upper_dir: str) -> None:
+        """Replace rootfs-diff.tar inside the checkpoint export with a
+        correct tar built from the container's overlay upper directory.
+
+        Podman 4.9.3 bug: metadata-only changes (e.g. chmod) are present
+        in the overlay upper dir but omitted from rootfs-diff.tar.
+        """
+        work = tempfile.mkdtemp(prefix="statefork_fix_rootfs_")
+        try:
+            subprocess.run(["tar", "-I", "zstd", "-xf", export_path, "-C", work],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            new_rootfs = os.path.join(work, "rootfs-diff.tar")
+            with tarfile.open(new_rootfs, "w") as tf:
+                for entry in os.scandir(upper_dir):
+                    tf.add(entry.path, arcname=entry.name, recursive=True)
+
+            cleaned = os.path.join(work, "rootfs-diff-cleaned.tar")
+            with tarfile.open(new_rootfs, "r") as src, tarfile.open(cleaned, "w") as dst:
+                for member in src:
+                    if any(member.name == p.rstrip("/") or member.name.startswith(p)
+                           for p in cls._ROOTFS_EXCLUDE):
+                        continue
+                    if member.isfile():
+                        dst.addfile(member, src.extractfile(member))
+                    else:
+                        dst.addfile(member)
+            os.replace(cleaned, new_rootfs)
+
+            uncompressed = export_path + ".tmp.tar"
+            subprocess.run(["tar", "-cf", uncompressed, "-C", work, "."],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["zstd", "-f", "--rm", "-q", uncompressed, "-o", export_path],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    # ------------------------------------------------------------------ #
+    #  Snapshot: podman container checkpoint --leave-running -e <path>    #
+    # ------------------------------------------------------------------ #
     def _core_snapshot(self) -> tuple[Optional[str], float]:
         sid = str(uuid.uuid4())[:8]
         export_path = os.path.join(self.export_dir, f"{sid}.tar.zstd")
 
+        # Debug: show container filesystem state immediately before checkpoint
+        try:
+            pre_snap = subprocess.run(
+                ["podman", "exec", self.container_name, "ls", "-al", "/app/"],
+                capture_output=True, text=True, check=False,
+            )
+            print(f"[DEBUG] [SNAPSHOT_PRE] sid={sid} container={self.container_name} ls -al /app/:\n{pre_snap.stdout}{pre_snap.stderr}")
+        except Exception as e:
+            print(f"[DEBUG] [SNAPSHOT_PRE] failed to ls: {e}")
+
         start = time.time()
-        subprocess.run([
-            "podman", "container", "checkpoint", self.container_name,
-            "-e", export_path, "--leave-running"
-        ], stdout=subprocess.DEVNULL, check=True)
+        subprocess.run(
+            [
+                "podman", "container", "checkpoint",
+                self.container_name,
+                "--leave-running",
+                "-e", export_path,
+            ],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+
+        # Podman 4.9.3 bug: rootfs-diff.tar omits metadata-only changes
+        # (e.g. chmod).  Rebuild it from the overlay upper dir.
+        upper_dir = self._get_upper_dir()
+        if upper_dir and os.path.isdir(upper_dir):
+            try:
+                self._fix_rootfs_diff_in_export(export_path, upper_dir)
+                print(f"[DEBUG] [SNAPSHOT_FIX] sid={sid} patched rootfs-diff.tar from upper_dir")
+            except Exception as e:
+                print(f"[DEBUG] [SNAPSHOT_FIX] sid={sid} failed to patch rootfs-diff: {e}")
+
         elapsed = time.time() - start
 
         self.snapshots[sid] = export_path
 
+        # Debug: verify the patched export
+        try:
+            export_size = os.path.getsize(export_path) if os.path.exists(export_path) else -1
+            tar_list = subprocess.run(
+                ["tar", "-I", "zstd", "-tf", export_path],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+            tar_entries = (tar_list.stdout or "").strip().splitlines()
+            rootfs_entries = [e for e in tar_entries if "rootfs-diff" in e]
+            print(
+                f"[DEBUG] [SNAPSHOT_DONE] sid={sid} export_path={export_path} "
+                f"size={export_size} total_tar_entries={len(tar_entries)} "
+                f"rootfs_diff_entries={len(rootfs_entries)}"
+            )
+        except Exception as e:
+            print(f"[DEBUG] [SNAPSHOT_DONE] sid={sid} tar_inspect_failed={e}")
+
         return sid, elapsed
 
+    # ------------------------------------------------------------------ #
+    #  Restore: rm -f  then  restore --import <path> --name --pod        #
+    # ------------------------------------------------------------------ #
     def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
         export_path = self.snapshots.get(snapshot_id)
         if not export_path:
             logger.warning(f"Snapshot ID {snapshot_id} not found.")
             return None, 0.0
 
-        # Stop & remove existing container if running
-        subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Remove existing container (mirrors: podman rm -f $CTR)
+        subprocess.run(["podman", "rm", "-f", self.container_name],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
-        # If the container belongs to a pod, restore into that existing pod.
-        # Harness creates pods with the name pattern: "pod_<container_name>"
-        pod_args: list[str] = []
-        try:
-            guessed_pod_name = f"pod_{self.container_name}"
-            # Debug: list current pods before existence check
-            try:
-                pods_list = subprocess.run(
-                    ["podman", "pod", "ps", "--no-trunc", "--format", "{{.ID}} {{.Name}}"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                print(f"[DEBUG] Existing pods before restore:\n{pods_list.stdout or ''}")
-            except Exception as e:
-                logger.debug(f"Failed to list pods before restore: {e}")
-
-            # Resolve pod ID (prefer ID to name for --pod)
-            pod_id: Optional[str] = None
-            try:
-                lines = (pods_list.stdout or "").strip().splitlines()
-                for line in lines:
-                    parts = line.strip().split(maxsplit=1)
-                    if len(parts) == 2:
-                        pid, pname = parts
-                        if pname == guessed_pod_name:
-                            pod_id = pid
-                            break
-            except Exception:
-                pass
-
-            # Fallback via pod inspect to get ID
-            if not pod_id:
-                try:
-                    insp = subprocess.run(
-                        ["podman", "pod", "inspect", guessed_pod_name, "--format", "{{.Id}}"],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    pod_id = (insp.stdout or "").strip() or None
-                except Exception:
-                    pod_id = None
-
-            if pod_id:
-                pod_args = ["--pod", pod_id]
-                print(f"[DEBUG] Restoring into pod id: {pod_id} (name: {guessed_pod_name})")
-            else:
-                print(f"[DEBUG] Pod not found by name '{guessed_pod_name}', restoring without --pod")
-        except Exception:
-            # Best-effort only; continue without pod args
-            pass
+        pod_args = self._resolve_pod_args()
+        print(f"[DEBUG] Restoring snapshot {snapshot_id} with pod_args={pod_args}")
 
         start = time.time()
-        # Ensure no stale container remains before restore (avoid name-in-use errors)
-        try:
-            subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        except Exception:
-            pass
-
-        # Restore processes/state into the container name (created above or created by restore)
-        restore_cmd = ["podman", "container", "restore"]
-        # Always pass pod args to restore if we detected a pod; Podman requires --pod for pod containers
-        if pod_args:
-            restore_cmd += pod_args
-        # Ensure export_path immediately follows -i (do not split -i and its value)
-        restore_cmd += ["-i", export_path, "-n", self.container_name]
-
+        restore_cmd = (
+            ["podman", "container", "restore"]
+            + pod_args
+            + ["--import", export_path, "--name", self.container_name]
+        )
         subprocess.run(restore_cmd, stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
+
+        # Debug: show container filesystem state immediately after restore
+        try:
+            post_restore = subprocess.run(
+                ["podman", "exec", self.container_name, "ls", "-al", "/app/"],
+                capture_output=True, text=True, check=False,
+            )
+            print(f"[DEBUG] [RESTORE_POST] sid={snapshot_id} container={self.container_name} ls -al /app/:\n{post_restore.stdout}{post_restore.stderr}")
+        except Exception as e:
+            print(f"[DEBUG] [RESTORE_POST] failed to ls: {e}")
 
         return self.container_name, elapsed
 
@@ -193,5 +263,3 @@ class HybridBuildManager(HybridAttachManager):
         time.sleep(2)  # wait for app to initialize
 
         super().__init__(container_name=container_name, export_dir=export_dir)
-
-
