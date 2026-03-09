@@ -16,7 +16,36 @@ class SmartCheckpointDecider(Decider):
         # TODO: Access from CheckpointLiteAttachManager.target_pid field
 
     def decide(self, context: DecisionContext) -> bool:
-        raise NotImplementedError()
+        """
+        Decide whether to create a physical snapshot.
+
+        Returns:
+            True  -> physical snapshot
+            False -> virtual snapshot
+        """
+        if context.pid == -1:
+        return True
+
+        mem_stats = self.__get_memory_usage_repr(context.pid)
+        if mem_stats is None:
+            return True
+
+        vmrss_kb = mem_stats.get("VmRSS")
+        if vmrss_kb is None:
+            return True
+
+        vmrss_mb = vmrss_kb / 1024
+
+        # Linear model from benchmark
+        a = 1.2   # ms per MB (example)
+        b = 100   # base overhead in ms
+
+        estimated_snapshot_time = a * vmrss_mb + b
+
+        if estimated_snapshot_time <= context.cumulative_exec_time:
+            return True   # physical snapshot
+        else:
+            return False  # virtual snapshot
 
     @staticmethod
     def __get_memory_usage_repr(pid: int) -> dict[str, str]| None:

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 @dataclass
 class DecisionContext:
     cumulative_exec_time: float
+    pid: int = -1
 
 
 class Decider(ABC):
