@@ -2,7 +2,7 @@ import argparse
 import logging
 
 from controller import create_env_manager
-from decider import RandomDecider, AlwaysTrueDecider, AlwaysFalseDecider, ThresholdDecider
+from decider import RandomDecider, AlwaysTrueDecider, AlwaysFalseDecider, ThresholdDecider, SmartCheckpointDecider
 
 
 AVAILABLE_COMMANDS = [
@@ -35,6 +35,7 @@ DECIDER_MAP = {
     "always_true": AlwaysTrueDecider,
     "always_false": AlwaysFalseDecider,
     "threshold": ThresholdDecider,
+    "smart_ckpt": SmartCheckpointDecider,
 }
 
 

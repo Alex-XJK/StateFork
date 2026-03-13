@@ -130,6 +130,9 @@ class CRIUAttachManager(EnvironmentManager):
         logger.info(f"Removing work directory {self.work_dir}...")
         shutil.rmtree(self.work_dir, ignore_errors=True)
 
+    def _get_curr_pid(self) -> int:
+        return -1
+
 
 class CRIUBuildManager(CRIUAttachManager):
     """

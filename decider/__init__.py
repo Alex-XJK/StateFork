@@ -6,3 +6,5 @@ from .decider import (
     ThresholdDecider,
     DecisionContext,
 )
+
+from .smart_ckpt_decider import SmartCheckpointDecider

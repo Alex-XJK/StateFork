@@ -24,7 +24,7 @@ class SmartCheckpointDecider(Decider):
             False -> virtual snapshot
         """
         if context.pid == -1:
-        return True
+            return True
 
         mem_stats = self.__get_memory_usage_repr(context.pid)
         if mem_stats is None:

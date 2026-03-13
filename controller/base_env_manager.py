@@ -66,6 +66,7 @@ class EnvironmentManager(ABC):
 
         context = DecisionContext(
             cumulative_exec_time=self._cumulative_exec_time,
+            pid=self._get_curr_pid(),
         )
         take_physical = self.decider.decide(context)
 
@@ -301,6 +302,18 @@ class EnvironmentManager(ABC):
         """
         logger.warning(f"_core_exec not implemented in {self.backend_name} backend.")
         return -1, "", "Not implemented."
+
+    @abstractmethod
+    def _get_curr_pid(self) -> int:
+        """
+        Return the PID of the process being checkpointed.
+
+        Returns:
+            int : PID of target process
+                -1 if PID is not available for this backend.
+        """
+        pass
+
 
     def list_snapshots(self) -> List[str]:
         """

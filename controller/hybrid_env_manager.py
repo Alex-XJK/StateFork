@@ -113,6 +113,9 @@ class HybridAttachManager(EnvironmentManager):
 
         return result.returncode, result.stdout, result.stderr
 
+    def _get_curr_pid(self) -> int:
+        return -1
+
 class HybridBuildManager(HybridAttachManager):
     def __init__(self,
                  container_name: str = "podman-build",

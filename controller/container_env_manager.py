@@ -166,6 +166,9 @@ class ContainerAttachManager(EnvironmentManager):
 
         return result.returncode, result.stdout, result.stderr
 
+    def _get_curr_pid(self) -> int:
+        return -1
+
 
 class ContainerBuildManager(ContainerAttachManager):
     def __init__(self,

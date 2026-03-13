@@ -173,6 +173,9 @@ class CheckpointLiteAttachManager(EnvironmentManager):
             logger.error(f"CheckpointLite exec failed: {e}")
             return -1, "", str(e)
 
+    def _get_curr_pid(self) -> int:
+        return int(self.target_pid) if self.target_pid is not None else -1
+
 class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
     """
     CheckpointLiteBuildManager is a specialized Checkpoint-lite EnvironmentManager that builds a new session.
