@@ -113,3 +113,11 @@ class SmartCheckpointDecider(Decider):
 
         # Convert back to "X MB" string format to match original return type
         return {key: val / 1024.0 for key, val in totals.items()}
+
+
+class SmartCheckpointDeciderStub(SmartCheckpointDecider):
+    def __init__(self):
+        super().__init__()
+
+    def decide(self, context: DecisionContext) -> bool:
+        return True

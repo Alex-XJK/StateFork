@@ -7,4 +7,4 @@ from .decider import (
     DecisionContext,
 )
 
-from .smart_ckpt_decider import SmartCheckpointDecider
+from .smart_ckpt_decider import SmartCheckpointDecider, SmartCheckpointDeciderStub

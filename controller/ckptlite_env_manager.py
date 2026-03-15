@@ -9,7 +9,7 @@ import logging
 from typing import Optional, List
 from .base_env_manager import EnvironmentManager, SnapshotNode
 from .benchmark import Calculator
-from decider import Decider
+from decider import Decider, SmartCheckpointDeciderStub
 
 logger = logging.getLogger("EnvManager.CkptLite")
 
@@ -73,6 +73,8 @@ class CheckpointLiteAttachManager(EnvironmentManager):
                  target_pid: int = PID_NOT_PROVIDED,
                  decider: Optional[Decider] = None,
                  ):
+        if decider is None:
+            decider = SmartCheckpointDeciderStub()
         super().__init__(backend_name="Checkpoint-lite", decider=decider)
         self.session_id = session_id
         self.target_pid = target_pid
