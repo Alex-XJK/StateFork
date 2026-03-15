@@ -76,7 +76,7 @@ class EnvironmentManager(ABC):
 
             if time.monotonic() >= deadline:
                 return False
-            time.sleep(0.005)
+            time.sleep(0.001)
 
 
     def snapshot(self) -> tuple[Optional[str], Optional[int]]:
