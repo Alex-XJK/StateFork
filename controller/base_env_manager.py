@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -56,6 +57,27 @@ class EnvironmentManager(ABC):
             logger.info("EnvironmentManager is being deleted, performing cleanup...")
             self.cleanup()
 
+    @staticmethod
+    def __pid_trywait(pid: int, timeout: float = 1.0) -> bool:
+        if pid <= 0:
+            return True
+
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return True
+            except Exception as e:
+                logger.debug(f"PID check error: {e}")
+
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.005)
+
 
     def snapshot(self) -> tuple[Optional[str], Optional[int]]:
         """
@@ -69,6 +91,11 @@ class EnvironmentManager(ABC):
             pid=self._get_curr_pid(),
         )
         take_physical = self.decider.decide(context)
+
+        if context.pid > 0:
+            ok = self.__pid_trywait(context.pid)
+            if not ok:
+                logger.warning("Target PID not found within timeout; continuing snapshot anyway.")
 
         # return the VmRSS size for decider simulation purposes
         vmrss_mb = None
@@ -154,6 +181,13 @@ class EnvironmentManager(ABC):
 
         # ===== Case 1: Physical =====
         if not node.is_virtual:
+
+            pid = self._get_curr_pid()
+            if pid> 0:
+                ok = self.__pid_trywait(pid)
+                if not ok:
+                    logger.warning("Target PID not found within timeout; continuing snapshot anyway.")
+
             success, elapsed = self._core_restore(snapshot_id)
 
             if not success:
@@ -279,6 +313,12 @@ class EnvironmentManager(ABC):
         - `command` may be a list of args or a raw shell string.
         - `timeout` in seconds (optional).
         """
+        pid = self._get_curr_pid()
+        if pid > 0:
+            ok = self.__pid_trywait(pid)
+            if not ok:
+                logger.warning("Target PID not found within timeout; continuing snapshot anyway.")
+
         start = time.time()
 
         try:
