@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from .benchmark import BenchmarkStats
-from decider import Decider, DecisionContext, AlwaysTrueDecider
+from decider import Decider, DecisionContext, AlwaysTrueDecider, SmartCheckpointDecider
 
 logger = logging.getLogger("EnvManager.Base")
 
@@ -57,10 +57,10 @@ class EnvironmentManager(ABC):
             self.cleanup()
 
 
-    def snapshot(self) -> Optional[str]:
+    def snapshot(self) -> tuple[Optional[str], Optional[int]]:
         """
         Create a snapshot of the current environment.
-        Returns a unique identifier for the snapshot.
+        Returns a unique identifier for the snapshot, and VmRSS size if possible.
         """
         parent_id = self.last_snapshot_id if self.last_snapshot_id else None
 
@@ -69,6 +69,13 @@ class EnvironmentManager(ABC):
             pid=self._get_curr_pid(),
         )
         take_physical = self.decider.decide(context)
+
+        # return the VmRSS size for decider simulation purposes
+        vmrss_mb = None
+        if isinstance(self.decider, SmartCheckpointDecider) and context.pid > 0:
+            mem_stats = SmartCheckpointDecider.get_memory_usage_repr(context.pid)
+            if mem_stats:
+                vmrss_mb = mem_stats.get("VmRSS")
 
         if take_physical:
             # ===== Physical Snapshot =====
@@ -123,7 +130,7 @@ class EnvironmentManager(ABC):
         # self.current_snapshot_id = snapshot_id
 
         self.is_cleaned_up = False
-        return snapshot_id
+        return snapshot_id, vmrss_mb
 
     @abstractmethod
     def _core_snapshot(self) -> tuple[Optional[str], float]:

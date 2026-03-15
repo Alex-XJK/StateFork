@@ -79,8 +79,12 @@ def interactive_shell(manager):
         cmd = input("\nStateFork > ").strip()
 
         if cmd == "snapshot":
-            sid = manager.snapshot()
-            print(f"Snapshot created: {sid}")
+            sid, rss = manager.snapshot()
+
+            if rss is not None:
+                print(f"Snapshot created: {sid} (VmRSS={rss} MB)")
+            else:
+                print(f"Snapshot created: {sid}")
 
         elif cmd.startswith("restore"):
             _, _, sid = cmd.partition(" ")

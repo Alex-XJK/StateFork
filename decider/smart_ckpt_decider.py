@@ -26,19 +26,17 @@ class SmartCheckpointDecider(Decider):
         if context.pid == -1:
             return True
 
-        mem_stats = self.__get_memory_usage_repr(context.pid)
+        mem_stats = self.get_memory_usage_repr(context.pid)
         if mem_stats is None:
             return True
 
-        vmrss_kb = mem_stats.get("VmRSS")
-        if vmrss_kb is None:
+        vmrss_mb = mem_stats.get("VmRSS")
+        if vmrss_mb is None:
             return True
 
-        vmrss_mb = vmrss_kb / 1024
-
         # Linear model from benchmark
-        a = 1.2   # ms per MB (example)
-        b = 100   # base overhead in ms
+        a = 0.0012   # seconds per MB (example)
+        b = 0.1      # base overhead in seconds
 
         estimated_snapshot_time = a * vmrss_mb + b
 
@@ -48,7 +46,7 @@ class SmartCheckpointDecider(Decider):
             return False  # virtual snapshot
 
     @staticmethod
-    def __get_memory_usage_repr(pid: int) -> dict[str, str]| None:
+    def get_memory_usage_repr(pid: int) -> dict[str, str]| None:
         """
         Get memory usage stats for a given PID with all its children by reading from /proc/[pid]/status.
         This method extracts relevant memory usage fields which can be used as features for the prediction model.
@@ -80,7 +78,7 @@ class SmartCheckpointDecider(Decider):
         def read_vm_fields(target_pid: int) -> dict[str, int]:
             """
             Read the relevant VmSize, VmRSS, VmPeak fields from /proc/[pid]/status.
-            Returns values in kB as integers, or empty dict if process is gone.
+            Returns values in MB as integers, or empty dict if process is gone.
             """
             fields = {}
             try:
@@ -88,7 +86,7 @@ class SmartCheckpointDecider(Decider):
                     for line in f:
                         if line.startswith("VmSize:") or line.startswith("VmRSS:") or line.startswith("VmPeak:"):
                             key, val = line.strip().split(":", 1)
-                            # val is like "51524 kB" — extract the integer part
+                            # val is like "51524 mB" — extract the integer part
                             fields[key] = int(val.strip().split()[0])
             except (FileNotFoundError, ProcessLookupError):
                 # Process may have exited between discovery and reading
@@ -113,5 +111,5 @@ class SmartCheckpointDecider(Decider):
         #  VmPeak is the peak virtual memory usage, and
         #  etc.
 
-        # Convert back to "X kB" string format to match original return type
-        return {key: val for key, val in totals.items()}
+        # Convert back to "X MB" string format to match original return type
+        return {key: val / 1024.0 for key, val in totals.items()}
