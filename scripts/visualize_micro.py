@@ -334,124 +334,156 @@ def _plot_line_only(
 
 
 def main():
-	parser = argparse.ArgumentParser(description="Visualize microbenchmark results (mem-only and fsInit-only)")
+	parser = argparse.ArgumentParser(description="Visualize microbenchmark results (mem-only, fsInit-only, fsGrowth-only, mem==fs)")
 	default_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "micro.csv"))
-	parser.add_argument("--csv", dest="csv_path", default=default_csv, help="Path to micro.csv (default: ../micro.csv)")
+	# Support multiple CSVs via --csv and/or positional inputs
+	parser.add_argument("--csv", dest="csv_paths", nargs="+", default=None, help="One or more CSV files")
+	parser.add_argument("inputs", nargs="*", help="CSV file(s)")
+	parser.add_argument("--labels", dest="labels", nargs="+", default=None, help="Optional labels for CSVs; defaults to filename stems")
 	parser.add_argument("--show", dest="show", action="store_true", help="Show interactive windows in addition to saving PNGs")
-	parser.add_argument("--outdir", dest="outdir", default=None, help="Output directory for figures (default: alongside CSV)")
+	parser.add_argument("--outdir", dest="outdir", default=None, help="Output directory for figures (default: alongside first CSV)")
 	args = parser.parse_args()
 
-	rows = _parse_rows(args.csv_path)
-	if not rows:
-		raise SystemExit(f"No rows parsed from {args.csv_path}")
+	# Resolve CSV list
+	csv_list = args.csv_paths or args.inputs
+	if not csv_list:
+		csv_list = [default_csv]
+	csv_list = [os.path.abspath(p) for p in csv_list]
 
-	# Aggregate datasets
-	mem_xs, mem_stats = _aggregate_mem_only(rows)
-	fs_xs, fs_stats = _aggregate_fsinit_only(rows)
-	fs_growth = _aggregate_fs_growth(rows)
-	memfs_xs, memfs_stats = _aggregate_mem_fs_equal(rows)
-
-	if not mem_xs:
-		print("Warning: no mem-only dataset found (fs_init_mb=0, fs_delta_mb=0)")
-	if not fs_xs:
-		print("Warning: no fsInit-only dataset found (mem_mb=0, fs_delta_mb=0, fs_init_mb>0)")
-	if not fs_growth:
-		print("Warning: no fsGrowth-only dataset found (mem_mb=0, fs_delta_mb>0)")
+	# Resolve labels
+	if args.labels and len(args.labels) == len(csv_list):
+		labels = list(args.labels)
+	else:
+		labels = [os.path.splitext(os.path.basename(p))[0] for p in csv_list]
 
 	# Prepare output directory
 	if args.outdir is None:
-		outdir = os.path.dirname(os.path.abspath(args.csv_path))
+		outdir = os.path.dirname(os.path.abspath(csv_list[0]))
 	else:
 		outdir = os.path.abspath(args.outdir)
 	os.makedirs(outdir, exist_ok=True)
 
-	# Figure 1: mem-only (x = average VmRSS MB)
-	if mem_xs:
-		fig1, ax1 = plt.subplots(figsize=(9, 5.2))
-		_plot_distribution_with_median(
-			ax1,
-			mem_xs,
-			mem_stats,
-			color="tab:blue",
-			label="mem-only",
-			x_label="VmRSS (MB, averaged across repeats)",
-		)
-		# Overlay reference lines for mem-only (if any)
+	# Figures (create lazily on first dataset that has data)
+	fig1 = ax1 = None  # mem-only
+	fig2 = ax2 = None  # fsInit-only
+	fig3 = ax3 = None  # fsGrowth-only
+	fig4 = ax4 = None  # mem==fs
+
+	# Color cycles per figure (dataset-level)
+	mem_colors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown"]
+	fsinit_colors = ["tab:green", "tab:blue", "tab:orange", "tab:red", "tab:purple", "tab:pink"]
+	memfs_colors = ["tab:cyan", "tab:olive", "tab:gray", "tab:brown", "tab:pink"]
+	# fsGrowth uses its own per-config cycle; we offset start per dataset
+	fsgrowth_cycle = [
+		"tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
+		"tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan",
+	]
+
+	for i, (csv_path, ds_label) in enumerate(zip(csv_list, labels)):
+		rows = _parse_rows(csv_path)
+		if not rows:
+			print(f"Warning: no rows parsed from {csv_path}")
+			continue
+
+		mem_xs, mem_stats = _aggregate_mem_only(rows)
+		fs_xs, fs_stats = _aggregate_fsinit_only(rows)
+		fs_growth = _aggregate_fs_growth(rows)
+		memfs_xs, memfs_stats = _aggregate_mem_fs_equal(rows)
+
+		if not mem_xs:
+			print(f"[{ds_label}] no mem-only dataset (fs_init_mb=0, fs_delta_mb=0)")
+		else:
+			if ax1 is None:
+				fig1, ax1 = plt.subplots(figsize=(9, 5.2))
+				ax1.set_title("Snapshot time vs memory (mem-only)")
+			color = mem_colors[i % len(mem_colors)]
+			_plot_distribution_with_median(
+				ax1,
+				mem_xs,
+				mem_stats,
+				color=color,
+				label=ds_label,
+				x_label="VmRSS (MB, averaged across repeats)",
+			)
+
+		if not fs_xs:
+			print(f"[{ds_label}] no fsInit-only dataset (mem_mb=0, fs_delta_mb=0, fs_init_mb>0)")
+		else:
+			if ax2 is None:
+				fig2, ax2 = plt.subplots(figsize=(9, 5.2))
+				ax2.set_title("Snapshot time vs initial filesystem size (fsInit-only)")
+			color = fsinit_colors[i % len(fsinit_colors)]
+			_plot_distribution_with_median(
+				ax2,
+				fs_xs,
+				fs_stats,
+				color=color,
+				label=ds_label,
+				x_label="fs_init_mb (MB)",
+			)
+
+		if not fs_growth:
+			print(f"[{ds_label}] no fsGrowth-only dataset (mem_mb=0, fs_delta_mb>0)")
+		else:
+			if ax3 is None:
+				fig3, ax3 = plt.subplots(figsize=(9.6, 5.4))
+				ax3.set_title("Snapshot time vs evolving filesystem size (fsGrowth-only)")
+			# offset color start per dataset to diversify
+			base_offset = (i * 3) % len(fsgrowth_cycle)
+			ci = 0
+			for (fs_init_mb, fs_delta_mb), (xs, stats_map) in sorted(fs_growth.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+				color = fsgrowth_cycle[(base_offset + ci) % len(fsgrowth_cycle)]
+				label = f"{ds_label}: {fs_init_mb}+N*{fs_delta_mb}MB"
+				_plot_line_only(
+					ax3,
+					xs,
+					stats_map,
+					color=color,
+					label=label,
+					x_label="Env size (MB) = fs_init_mb + fs_delta_mb * pair_idx",
+				)
+				ci += 1
+
+		if not memfs_xs:
+			# Not printing to reduce noise; it's a niche view
+			pass
+		else:
+			if ax4 is None:
+				fig4, ax4 = plt.subplots(figsize=(9, 5.2))
+				ax4.set_title("Snapshot time vs size when memory equals filesystem (mem_fs)")
+			color = memfs_colors[i % len(memfs_colors)]
+			_plot_distribution_with_median(
+				ax4,
+				memfs_xs,
+				memfs_stats,
+				color=color,
+				label=ds_label,
+				x_label="Size (MB) where mem_mb == fs_init_mb and fs_delta_mb == 0",
+			)
+
+	# After plotting all datasets, overlay references where applicable
+	if ax1 is not None:
 		_plot_reference_lines(ax1, REF_DATA.get("mem_only", {}))
-		ax1.set_title("Snapshot time vs memory (mem-only)")
 		ax1.legend(loc="best")
 		mem_out = os.path.join(outdir, "micro_mem_only.png")
-		fig1.tight_layout()
-		fig1.savefig(mem_out, dpi=160)
-		print(f"Saved: {mem_out}")
+		fig1.tight_layout(); fig1.savefig(mem_out, dpi=160); print(f"Saved: {mem_out}")
 
-	# Figure 2: fsInit-only (x = fs_init_mb)
-	if fs_xs:
-		fig2, ax2 = plt.subplots(figsize=(9, 5.2))
-		_plot_distribution_with_median(
-			ax2,
-			fs_xs,
-			fs_stats,
-			color="tab:green",
-			label="fsInit-only",
-			x_label="fs_init_mb (MB)",
-		)
-		# Overlay reference lines for fsinit-only (if any)
+	if ax2 is not None:
 		_plot_reference_lines(ax2, REF_DATA.get("fsinit_only", {}))
-		ax2.set_title("Snapshot time vs initial filesystem size (fsInit-only)")
 		ax2.legend(loc="best")
 		fs_out = os.path.join(outdir, "micro_fsinit_only.png")
-		fig2.tight_layout()
-		fig2.savefig(fs_out, dpi=160)
-		print(f"Saved: {fs_out}")
+		fig2.tight_layout(); fig2.savefig(fs_out, dpi=160); print(f"Saved: {fs_out}")
 
-	# Figure 3: fsGrowth-only (x = fs_init_mb + fs_delta_mb * pair_idx)
-	if fs_growth:
-		fig3, ax3 = plt.subplots(figsize=(9.6, 5.4))
-		# cycle colors for multiple configs
-		color_cycle = [
-			"tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
-			"tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan",
-		]
-		ci = 0
-		for (fs_init_mb, fs_delta_mb), (xs, stats_map) in sorted(fs_growth.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-			color = color_cycle[ci % len(color_cycle)]
-			label = f"{fs_init_mb} + N * {fs_delta_mb}MB"
-			_plot_distribution_with_median(
-				ax3,
-				xs,
-				stats_map,
-				color=color,
-				label=label,
-				x_label="Env size (MB) = fs_init_mb + fs_delta_mb * pair_idx",
-			)
-			ci += 1
-		ax3.set_title("Snapshot time vs evolving filesystem size (fsGrowth-only)")
+	if ax3 is not None:
 		ax3.legend(loc="best", ncol=2)
 		growth_out = os.path.join(outdir, "micro_fsgrowth_only.png")
-		fig3.tight_layout()
-		fig3.savefig(growth_out, dpi=160)
-		print(f"Saved: {growth_out}")
+		fig3.tight_layout(); fig3.savefig(growth_out, dpi=160); print(f"Saved: {growth_out}")
 
-	# Figure 4: mem==fs (delta=0) (x = size MB)
-	if memfs_xs:
-		fig4, ax4 = plt.subplots(figsize=(9, 5.2))
-		_plot_distribution_with_median(
-			ax4,
-			memfs_xs,
-			memfs_stats,
-			color="tab:cyan",
-			label="mem==fs (delta=0)",
-			x_label="Size (MB) where mem_mb == fs_init_mb and fs_delta_mb == 0",
-		)
-		# Overlay reference lines for mem_fs (if any)
+	if ax4 is not None:
 		_plot_reference_lines(ax4, REF_DATA.get("mem_fs", {}))
-		ax4.set_title("Snapshot time vs size when memory equals filesystem (mem_fs)")
 		ax4.legend(loc="best")
 		memfs_out = os.path.join(outdir, "micro_mem_fs.png")
-		fig4.tight_layout()
-		fig4.savefig(memfs_out, dpi=160)
-		print(f"Saved: {memfs_out}")
+		fig4.tight_layout(); fig4.savefig(memfs_out, dpi=160); print(f"Saved: {memfs_out}")
 
 	if args.show:
 		plt.show()
