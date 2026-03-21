@@ -12,7 +12,7 @@ from typing import Iterable, List, Optional, Tuple
 
 # developer tunables
 DEFAULT_LOG_LEVEL = "INFO"             # logging level used in benchmarks
-SLEEP_BETWEEN_PAIRS = 5.0                # seconds to wait between each snapshot pair
+SLEEP_BETWEEN_PAIRS = 1.0                # seconds to wait between each snapshot pair
 SLEEP_BETWEEN_CONFIGS = 5.0             # seconds to wait between different configurations
 
 from decider import AlwaysTrueDecider
@@ -160,6 +160,31 @@ def du_bytes(path: str) -> Optional[int]:
         return None
 
 
+def log_ps_bash_context(logger: logging.Logger,
+                        pattern: str = "/bin/bash --norc --noprofile",
+                        context: int = 3) -> None:
+    """
+    Log ps output around lines matching pattern with given context.
+    """
+    try:
+        proc = subprocess.run(["ps", "-ef", "--forest"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        if proc.returncode != 0:
+            logger.warning(f"ps failed: {proc.stderr.strip()}")
+            return
+        lines = (proc.stdout or "").splitlines()
+        idxs = [i for i, line in enumerate(lines) if pattern in line]
+        if not idxs:
+            logger.info(f"ps: no matches for pattern: {pattern}")
+            return
+        for k, i in enumerate(idxs, 1):
+            start = max(0, i - context)
+            end = min(len(lines), i + context + 1)
+            block = "\n".join(lines[start:end])
+            logger.info(f"ps context ({k}/{len(idxs)}) around '{pattern}':\n{block}")
+    except Exception as e:
+        logger.warning(f"ps context logging failed: {e}")
+
+
 # =========================
 # Memhog controller
 # =========================
@@ -249,7 +274,21 @@ def run_one_configuration(csvlog: CsvLogger,
 
     memhog = MemhogController(manager)
     try:
+        # Initial FS generation (explicit modification) and du sample
+        if fs_init_mb > 0:
+            rc, out, err = manager.exec_command(f"/app/app/fsgen {fs_init_mb}")
+            if rc != 0 or (err or "").strip():
+                logging.warning(f"fsgen init failed rc={rc} err={err}")
+            du_size = du_bytes(manager.work_dir)
+            csvlog.log("INFO.du", du_size, mem_mb, fs_init_mb, fs_delta_mb, repeat_idx, 0,
+                       comment=f"du_B={du_size}")
+
+        # Gentle pause between operations
+        if SLEEP_BETWEEN_PAIRS > 0:
+            time.sleep(SLEEP_BETWEEN_PAIRS)
+
         # Start memhog (memory modification) and sample VmRSS once
+        pid: Optional[int] = None
         if mem_mb > 0:
             try:
                 pid = memhog.start(mem_mb)
@@ -260,15 +299,6 @@ def run_one_configuration(csvlog: CsvLogger,
                 vmrss = read_vmrss_kb(pid)
                 csvlog.log("INFO.vmrss", float(vmrss), mem_mb, fs_init_mb, fs_delta_mb, repeat_idx, 0,
                         comment=f"pid={pid};VmRSS_kB={vmrss}")
-
-        # Initial FS generation (explicit modification) and du sample
-        if fs_init_mb > 0:
-            rc, out, err = manager.exec_command(f"/app/app/fsgen {fs_init_mb}")
-            if rc != 0 or (err or "").strip():
-                logging.warning(f"fsgen init failed rc={rc} err={err}")
-            du_size = du_bytes(manager.work_dir)
-            csvlog.log("INFO.du", du_size, mem_mb, fs_init_mb, fs_delta_mb, repeat_idx, 0,
-                       comment=f"du_B={du_size}")
 
         # Main loop: snapshot-restore pairs
         for pair_idx in range(1, pairs + 1):
@@ -281,6 +311,7 @@ def run_one_configuration(csvlog: CsvLogger,
             if SLEEP_BETWEEN_PAIRS > 0:
                 time.sleep(SLEEP_BETWEEN_PAIRS)
 
+            # Validation
             ok_snap, comment_snap, _ = validate_exec_ok(manager)
             if not sid:
                 comment_snap = (comment_snap + "; " if comment_snap else "") + "snapshot=None"
@@ -293,9 +324,26 @@ def run_one_configuration(csvlog: CsvLogger,
 
             # optionally restore
             if measure_restore:
+                if mem_mb > 0 and pid is not None:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                
+                # Gentle pause between operations
+                if SLEEP_BETWEEN_PAIRS > 0:
+                    time.sleep(SLEEP_BETWEEN_PAIRS)
+
+                # Restore
                 r0 = time.perf_counter_ns()
                 restored = manager.restore(sid) if sid else False
                 rest_ms = ms_since(r0)
+
+                # Gentle pause between operations
+                if SLEEP_BETWEEN_PAIRS > 0:
+                    time.sleep(SLEEP_BETWEEN_PAIRS)
+
+                # Validation
                 ok_res, comment_res, _ = validate_exec_ok(manager)
                 if not restored:
                     comment_res = (comment_res + "; " if comment_res else "") + "restore=False"
@@ -310,6 +358,12 @@ def run_one_configuration(csvlog: CsvLogger,
                 du_size = du_bytes(manager.work_dir)
                 csvlog.log("INFO.du", du_size, mem_mb, fs_init_mb, fs_delta_mb, repeat_idx, pair_idx,
                            comment=f"du_B={du_size}")
+
+            # Log host ps bash context after each pair (text log only)
+            try:
+                log_ps_bash_context(logger)
+            except Exception:
+                pass
 
             # Gentle pause between pairs
             if SLEEP_BETWEEN_PAIRS > 0:
