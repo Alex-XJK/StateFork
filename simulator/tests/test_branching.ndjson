@@ -1,0 +1,5 @@
+{"type": "node_created", "node_id": "A", "parent_id": "root"}
+{"type": "node_created", "node_id": "B", "parent_id": "root"}
+{"type": "node_created", "node_id": "C", "parent_id": "A"}
+{"type": "node_created", "node_id": "D", "parent_id": "A"}
+{"type": "node_created", "node_id": "E", "parent_id": "B"}
