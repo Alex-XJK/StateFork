@@ -168,8 +168,15 @@ class CheckpointLiteAttachManager(EnvironmentManager):
             )
             return proc.returncode, proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as e:
-            out = e.stdout or ""
-            err = (e.stderr or "") + f"\n[timeout after {timeout}s]"
+            def _to_text(value: object) -> str:
+                if value is None:
+                    return ""
+                if isinstance(value, bytes):
+                    return value.decode("utf-8", errors="replace")
+                return str(value)
+
+            out = _to_text(e.stdout)
+            err = _to_text(e.stderr) + f"\n[timeout after {timeout}s]"
             logger.error(f"CheckpointLite exec timeout: {e}")
             return -1, out, err
         except Exception as e:
