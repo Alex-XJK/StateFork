@@ -3,8 +3,9 @@ from tree.node import Node
 
 class TreeBuilder:
     def __init__(self):
-        self.nodes = {}   # node_id -> Node
+        self.nodes = {}
         self.root = None
+        self.seen_nodes = set()
 
     def get_or_create_node(self, node_id):
         if node_id not in self.nodes:
@@ -18,15 +19,26 @@ class TreeBuilder:
         node_id = event["node_id"]
         parent_id = event["parent_id"]
 
+        # --- Validation ---
+        if not self.seen_nodes:
+            # First event → allow root
+            self.seen_nodes.add(parent_id)
+        elif parent_id not in self.seen_nodes:
+            raise ValueError(
+                f"[TreeBuilder] Invalid event: parent '{parent_id}' not seen before creating '{node_id}'"
+            )
+
+        # --- Build ---
         node = self.get_or_create_node(node_id)
         parent = self.get_or_create_node(parent_id)
 
-        # Link them
         parent.add_child(node)
 
-        # Set root if not set (first parent encountered)
         if self.root is None:
             self.root = parent
+
+        # Mark node as seen
+        self.seen_nodes.add(node_id)
 
     def build_from_events(self, events):
         for event in events:

@@ -1,5 +1,6 @@
 from utils.ndjson_reader import read_ndjson
 from tree.tree_builder import TreeBuilder
+from trace.trace_builder import TraceBuilder
 import os
 
 
@@ -9,9 +10,13 @@ def run_test(file_name):
     file_path = os.path.join("tests", file_name)
     events = read_ndjson(file_path)
 
-    builder = TreeBuilder()
-    builder.build_from_events(events)
-    builder.print_tree()
+    eventsbuilder = TreeBuilder()
+    eventsbuilder.build_from_events(events)
+    eventsbuilder.print_tree()
+
+    tracebuilder = TraceBuilder()
+    tracebuilder.build_from_events(events)
+    tracebuilder.print_trace()
 
 
 def main():

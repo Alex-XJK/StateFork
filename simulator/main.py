@@ -1,5 +1,6 @@
 from utils.ndjson_reader import read_ndjson
 from tree.tree_builder import TreeBuilder
+from trace import TraceBuilder
 
 
 def main():
@@ -7,11 +8,17 @@ def main():
 
     events = read_ndjson(file_path)
 
-    builder = TreeBuilder()
-    builder.build_from_events(events)
+    treebuilder = TreeBuilder()
+    treebuilder.build_from_events(events)
 
     print("\n=== Reconstructed Tree ===")
-    builder.print_tree()
+    treebuilder.print_tree()
+
+    tracebuilder = TraceBuilder()
+    tracebuilder.build_from_events(events)
+
+    print("\n=== Reconstructed Trace ===")
+    tracebuilder.print_trace()
 
 
 if __name__ == "__main__":
