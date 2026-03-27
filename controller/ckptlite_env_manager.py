@@ -204,7 +204,9 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
                 check=True
             )
 
-            output = init_process.stdout.strip()
+            raw = init_process.stdout or ""
+            lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+            output = lines[-1] if lines else ""
             try:
                 sid, self._work_dir = output.split(",", 1)
             except ValueError:
@@ -218,7 +220,9 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
                 check=True
             )
 
-            output = init_process.stdout.strip()
+            raw = init_process.stdout or ""
+            lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+            output = lines[-1] if lines else ""
             try:
                 sid, self._work_dir, pid = output.split(",", 2)
             except ValueError:
