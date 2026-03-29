@@ -31,7 +31,18 @@ fsgen.o: fsgen.cpp
 PHONY += clean
 PHONY += all
 
+MEMTOUCH = memtouch
+MEMTOUCH_OBJS = memtouch.o
+
+all: $(MEMTOUCH)
+
+$(MEMTOUCH): $(MEMTOUCH_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+memtouch.o: memtouch.cpp
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f $(OBJS) $(TARGET) a.out $(MEMHOG_OBJS) $(MEMHOG) $(FSGEN_OBJS) $(FSGEN)
+	rm -f $(OBJS) $(TARGET) a.out $(MEMHOG_OBJS) $(MEMHOG) $(FSGEN_OBJS) $(FSGEN) $(MEMTOUCH_OBJS) $(MEMTOUCH)
 
 .PHONY: $(PHONY)
