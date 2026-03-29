@@ -19,6 +19,7 @@ REF_DATA = {
 			(0.0, 56.0),
 			(1024.0, 4586.0),
 			(2048.0, 6391.0),
+			(4096.0, 12256.0),
 		],
 		"Podman": [
             (0.0, 54.0),
@@ -54,6 +55,16 @@ REF_DATA = {
 			(1024.0, 8844.0),
 		],
 	},
+}
+
+# Brand color mapping for reference overlays
+BRAND_COLORS: Dict[str, str] = {
+	"Docker": "lightskyblue",      # light blue
+	"Podman": "tab:purple",       # purple
+	"CRIU": "tab:red",            # red
+	"Podman-Hybrid": "tab:pink",  # pink
+	"gVisor": "navy",             # dark blue
+	"Firecracker": "tab:orange",  # orange
 }
 
 
@@ -307,10 +318,12 @@ def _plot_reference_lines(
 			continue
 		# Sort by x to ensure a nice line
 		xs, ys = zip(*sorted(pts, key=lambda t: t[0]))
-		try:
-			color = next(colors)
-		except StopIteration:
-			color = None
+		color = BRAND_COLORS.get(name)
+		if color is None:
+			try:
+				color = next(colors)
+			except StopIteration:
+				color = None
 		ax.plot(xs, ys, linestyle=linestyle, linewidth=1.5, alpha=alpha, color=color, label=name)
 
 
@@ -336,12 +349,13 @@ def _plot_line_only(
 def main():
 	parser = argparse.ArgumentParser(description="Visualize microbenchmark results (mem-only, fsInit-only, fsGrowth-only, mem==fs)")
 	default_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "micro.csv"))
-	# Support multiple CSVs via --csv and/or positional inputs
 	parser.add_argument("--csv", dest="csv_paths", nargs="+", default=None, help="One or more CSV files")
 	parser.add_argument("inputs", nargs="*", help="CSV file(s)")
 	parser.add_argument("--labels", dest="labels", nargs="+", default=None, help="Optional labels for CSVs; defaults to filename stems")
-	parser.add_argument("--show", dest="show", action="store_true", help="Show interactive windows in addition to saving PNGs")
 	parser.add_argument("--outdir", dest="outdir", default=None, help="Output directory for figures (default: alongside first CSV)")
+	parser.add_argument("--stats-only", dest="stats_only", action="store_true", help="Print mean/median for our data at major sizes and exit")
+	parser.add_argument("--max-mb", dest="max_mb", type=float, default=None, help="Upper limit in MB for plotting (applies to major 3 charts)")
+	parser.add_argument("--max-ms", dest="max_ms", type=float, default=None, help="Upper limit in milliseconds for Y-axis (applies to major 3 charts; data not dropped, just clipped)")
 	args = parser.parse_args()
 
 	# Resolve CSV list
@@ -363,16 +377,80 @@ def main():
 		outdir = os.path.abspath(args.outdir)
 	os.makedirs(outdir, exist_ok=True)
 
+	# If only stats are requested, compute for the first dataset and exit
+	if args.stats_only:
+		def _print_stats_major(rows: List[dict], op: str):
+			# Only major sizes
+			major_sizes = {0, 128, 256, 512, 1024, 2048, 4096}
+
+			def summarize(values: List[float]) -> Tuple[float, float, int]:
+				a = np.asarray(values, dtype=float)
+				return float(np.median(a)), float(np.mean(a)), int(a.size)
+
+			# mem-only by declared mem_mb
+			mem_groups: Dict[int, List[float]] = defaultdict(list)
+			for r in rows:
+				if r["operation"] == op and r["fs_init_mb"] == 0 and r["fs_delta_mb"] == 0:
+					mem_groups[r["mem_mb"]].append(r["elapsed_ms"])
+
+			# fsInit-only by fs_init_mb
+			fs_groups: Dict[int, List[float]] = defaultdict(list)
+			for r in rows:
+				if r["operation"] == op and r["mem_mb"] == 0 and r["fs_delta_mb"] == 0:
+					fs_groups[r["fs_init_mb"]].append(r["elapsed_ms"])
+
+			# mem==fs by size (mem_mb)
+			memfs_groups: Dict[int, List[float]] = defaultdict(list)
+			for r in rows:
+				if r["operation"] == op and r["fs_delta_mb"] == 0 and r["mem_mb"] == r["fs_init_mb"]:
+					memfs_groups[r["mem_mb"]].append(r["elapsed_ms"])
+
+			print("== Stats (median / mean / count) ==\n")
+			print("-- mem-only --")
+			for x in sorted(major_sizes.intersection(mem_groups.keys())):
+				med, mean, cnt = summarize(mem_groups[x])
+				print(f"{x:>5} MB: median={med:.3f} ms, mean={mean:.3f} ms, n={cnt}")
+
+			print("\n-- fsInit-only --")
+			for x in sorted(major_sizes.intersection(fs_groups.keys())):
+				med, mean, cnt = summarize(fs_groups[x])
+				print(f"{x:>5} MB: median={med:.3f} ms, mean={mean:.3f} ms, n={cnt}")
+
+			print("\n-- mem==fs --")
+			for x in sorted(major_sizes.intersection(memfs_groups.keys())):
+				med, mean, cnt = summarize(memfs_groups[x])
+				print(f"{x:>5} MB: median={med:.3f} ms, mean={mean:.3f} ms, n={cnt}")
+
+		first_csv = (args.csv_paths or args.inputs or [default_csv])[0]
+		rows = _parse_rows(os.path.abspath(first_csv))
+		_print_stats_major(rows, op="SNAPSHOT")
+		return
+
+	# Axis limit helpers: crop visuals without dropping data
+	def _apply_major_limits(ax: plt.Axes):
+		if args.max_mb is not None:
+			ax.set_xlim(right=args.max_mb)
+		if args.max_ms is not None:
+			ax.set_ylim(top=args.max_ms)
+		# Ensure 0 is visible away from border
+		_, y_top = ax.get_ylim()
+		pad = max(1.0, 0.02 * y_top)
+		ax.set_ylim(bottom=-pad)
+		ax.set_xlim(left=-pad)
+
 	# Figures (create lazily on first dataset that has data)
 	fig1 = ax1 = None  # mem-only
 	fig2 = ax2 = None  # fsInit-only
 	fig3 = ax3 = None  # fsGrowth-only
 	fig4 = ax4 = None  # mem==fs
 
-	# Color cycles per figure (dataset-level)
-	mem_colors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown"]
-	fsinit_colors = ["tab:green", "tab:blue", "tab:orange", "tab:red", "tab:purple", "tab:pink"]
-	memfs_colors = ["tab:cyan", "tab:olive", "tab:gray", "tab:brown", "tab:pink"]
+	# Color cycles for datasets other than the first; first dataset is forced to green
+	mem_colors = ["tab:blue", "tab:orange", "tab:red", "tab:purple", "tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
+	fsinit_colors = ["tab:blue", "tab:orange", "tab:red", "tab:purple", "tab:pink", "tab:gray", "tab:olive", "tab:cyan", "tab:brown"]
+	memfs_colors = ["tab:cyan", "tab:olive", "tab:gray", "tab:brown", "tab:pink", "tab:blue", "tab:red", "tab:purple"]
+
+	def _dataset_color(idx: int, cycle: List[str]) -> str:
+		return "tab:green" if idx == 0 else cycle[(idx - 1) % len(cycle)]
 	# fsGrowth uses its own per-config cycle; we offset start per dataset
 	fsgrowth_cycle = [
 		"tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
@@ -396,7 +474,7 @@ def main():
 			if ax1 is None:
 				fig1, ax1 = plt.subplots(figsize=(9, 5.2))
 				ax1.set_title("Snapshot time vs memory (mem-only)")
-			color = mem_colors[i % len(mem_colors)]
+			color = _dataset_color(i, mem_colors)
 			_plot_distribution_with_median(
 				ax1,
 				mem_xs,
@@ -405,6 +483,7 @@ def main():
 				label=ds_label,
 				x_label="VmRSS (MB, averaged across repeats)",
 			)
+			_apply_major_limits(ax1)
 
 		if not fs_xs:
 			print(f"[{ds_label}] no fsInit-only dataset (mem_mb=0, fs_delta_mb=0, fs_init_mb>0)")
@@ -412,7 +491,7 @@ def main():
 			if ax2 is None:
 				fig2, ax2 = plt.subplots(figsize=(9, 5.2))
 				ax2.set_title("Snapshot time vs initial filesystem size (fsInit-only)")
-			color = fsinit_colors[i % len(fsinit_colors)]
+			color = _dataset_color(i, fsinit_colors)
 			_plot_distribution_with_median(
 				ax2,
 				fs_xs,
@@ -421,6 +500,7 @@ def main():
 				label=ds_label,
 				x_label="fs_init_mb (MB)",
 			)
+			_apply_major_limits(ax2)
 
 		if not fs_growth:
 			print(f"[{ds_label}] no fsGrowth-only dataset (mem_mb=0, fs_delta_mb>0)")
@@ -451,7 +531,7 @@ def main():
 			if ax4 is None:
 				fig4, ax4 = plt.subplots(figsize=(9, 5.2))
 				ax4.set_title("Snapshot time vs size when memory equals filesystem (mem_fs)")
-			color = memfs_colors[i % len(memfs_colors)]
+			color = _dataset_color(i, memfs_colors)
 			_plot_distribution_with_median(
 				ax4,
 				memfs_xs,
@@ -460,6 +540,7 @@ def main():
 				label=ds_label,
 				x_label="Size (MB) where mem_mb == fs_init_mb and fs_delta_mb == 0",
 			)
+			_apply_major_limits(ax4)
 
 	# After plotting all datasets, overlay references where applicable
 	if ax1 is not None:
@@ -484,9 +565,6 @@ def main():
 		ax4.legend(loc="best")
 		memfs_out = os.path.join(outdir, "micro_mem_fs.png")
 		fig4.tight_layout(); fig4.savefig(memfs_out, dpi=160); print(f"Saved: {memfs_out}")
-
-	if args.show:
-		plt.show()
 
 
 if __name__ == "__main__":
