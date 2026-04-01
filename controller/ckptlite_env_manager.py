@@ -203,13 +203,26 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
         logger.info("Creating a new Checkpoint-lite session...")
         pid = PID_NOT_PROVIDED
         if not build:
-            init_process = subprocess.run(
-                ["./checkpoint-lite", "init", target_dir, "--quiet"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
-            )
+            try:
+                init_process = subprocess.run(
+                    ["./checkpoint-lite", "init", target_dir, "--quiet"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                def _to_text(value: object) -> str:
+                    if isinstance(value, bytes):
+                        return value.decode("utf-8", errors="replace")
+                    return str(value)
+
+                out = _to_text(e.stdout)
+                err = _to_text(e.stderr)
+                logger.error(f"CheckpointLite init failed: {out} {err}")
+                raise RuntimeError(f"CheckpointLite init failed: {e}")
+            except Exception as e:
+                raise RuntimeError(f"CheckpointLite init failed: {e}")
 
             raw = init_process.stdout or ""
             lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
@@ -219,13 +232,26 @@ class CheckpointLiteBuildManager(CheckpointLiteAttachManager):
             except ValueError:
                 raise RuntimeError(f"Unexpected output format: {output}")
         else:
-            init_process = subprocess.run(
-                ["./checkpoint-lite", "build", target_dir, "--quiet"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
-            )
+            try:
+                init_process = subprocess.run(
+                    ["./checkpoint-lite", "build", target_dir, "--quiet"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                def _to_text(value: object) -> str:
+                    if isinstance(value, bytes):
+                        return value.decode("utf-8", errors="replace")
+                    return str(value)
+
+                out = _to_text(e.stdout)
+                err = _to_text(e.stderr)
+                logger.error(f"CheckpointLite build failed: {out} {err}")
+                raise RuntimeError(f"CheckpointLite build failed: {e}")
+            except Exception as e:
+                raise RuntimeError(f"CheckpointLite build failed: {e}")
 
             raw = init_process.stdout or ""
             lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
