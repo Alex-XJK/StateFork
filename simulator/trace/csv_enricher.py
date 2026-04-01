@@ -16,6 +16,7 @@ class CSVEnricher:
         return datetime.fromisoformat(ts)
 
     def parse_csv(self, file_path):
+        self.node_sequence = []  # ordered list
 
         current_id = None
         start_time = None
@@ -23,79 +24,64 @@ class CSVEnricher:
         vmrss = None
 
         def flush():
-            nonlocal current_id, start_time, end_time, vmrss
-
-            if current_id is None:
-                return
-
-            execution_time = None
-            if start_time and end_time:
-                execution_time = (end_time - start_time).total_seconds()
-
-            # Only store if meaningful (skip restore-only)
-            if execution_time is not None or vmrss is not None:
-                self.node_info.setdefault(current_id, {
-                    "execution_time": execution_time,
-                    "vmrss_mb": vmrss,
+            if current_id and start_time and end_time:
+                exec_time = (end_time - start_time).total_seconds()
+                self.node_sequence.append({
+                    "node_id": current_id,
+                    "execution_time": exec_time,
+                    "vmrss_mb": vmrss
                 })
 
-            # reset
-            current_id = None
-            start_time = None
-            end_time = None
-            vmrss = None
-
-        with open(file_path, newline="") as f:
+        with open(file_path, "r") as f:
             reader = csv.DictReader(f)
 
             for row in reader:
                 cid = row.get("checkpoint_id")
 
-                # Detect checkpoint change
+                # detect new block
                 if cid and cid != current_id:
                     flush()
                     current_id = cid
+                    start_time = None
+                    end_time = None
+                    vmrss = None
 
-                # Parse fields
+                # parse times
                 if row.get("command_execution_start_time"):
                     start_time = self.parse_time(row["command_execution_start_time"])
 
                 if row.get("command_execution_end_time"):
                     end_time = self.parse_time(row["command_execution_end_time"])
 
+                # parse memory
                 if row.get("ckptlite_snapshot_vmrss_mb"):
                     vmrss = float(row["ckptlite_snapshot_vmrss_mb"])
 
-            # flush last
             flush()
 
     def attach_to_trace(self):
-        node_items = list(self.node_info.items())
         node_idx = 0
+        nodes = self.node_sequence
 
-        for cmd_idx, cmd in enumerate(self.trace_builder.commands):
-
-            # Only SNAPSHOT commands correspond to CSV entries
+        for cmd in self.trace_builder.commands:
             if cmd.cmd_type.value != "snapshot":
-                node_idx += 1
                 continue
 
-            # Stop if CSV runs out
-            if node_idx >= len(node_items):
+            if node_idx >= len(nodes):
+                print("[CSVEnricher] CSV exhausted")
                 break
 
-            expected_node_id, info = node_items[node_idx]
+            node = nodes[node_idx]
 
-            # strictly match src_id instead of dst_id
-            if cmd.src_id != expected_node_id:
+            # Match using SRC node (correct now)
+            if cmd.src_id != node["node_id"]:
                 raise ValueError(
-                    f"[CSVEnricher] Mismatch at command index {cmd_idx}:\n"
-                    f"  Trace node (src): {cmd.src_id}\n"
-                    f"  CSV node:         {expected_node_id}"
+                    f"[CSVEnricher] Mismatch:\n"
+                    f"  Trace node: {cmd.src_id}\n"
+                    f"  CSV node:   {node['node_id']}"
                 )
 
-            # Attach data to THIS command
-            cmd.execution_time = info["execution_time"]
-            cmd.vmrss_mb = info["vmrss_mb"]
+            cmd.execution_time = node["execution_time"]
+            cmd.vmrss_mb = node["vmrss_mb"]
 
             node_idx += 1

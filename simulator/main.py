@@ -7,24 +7,27 @@ def main():
     ndjson_path = "data/events.ndjson"
     csv_path = "data/events.csv"
 
+    # build the tree
     events = read_ndjson(ndjson_path)
-
     treebuilder = TreeBuilder()
     treebuilder.build_from_events(events)
 
-    print("\n=== Reconstructed Tree ===")
-    treebuilder.print_tree()
-
+    # build the trace
     tracebuilder = TraceBuilder()
     tracebuilder.build_from_events(events)
 
-    print("\n=== Reconstructed Trace ===")
-    tracebuilder.print_trace()
-
-    # --- Enrich ---
+    # enrich the trace from the CSV
     enricher = CSVEnricher(tracebuilder)
     enricher.parse_csv(csv_path)
     enricher.attach_to_trace()
+
+    # re-annotate the tree to decide if node is
+    # virtual or physical
+    treebuilder.annotate_virtual_physical(tracebuilder)
+
+    # print
+    print("\n=== Annotated Tree (V/P) ===")
+    treebuilder.print_tree()
 
     print("\n=== Reconstructed Trace ===")
     tracebuilder.print_trace()

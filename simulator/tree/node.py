@@ -4,6 +4,8 @@ class Node:
         self.parent = None
         self.children = []
 
+        self.is_virtual = None   # True = virtual, False = physical
+
     def add_child(self, child_node):
         self.children.append(child_node)
         child_node.parent = self
