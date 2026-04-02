@@ -32,6 +32,17 @@ def main():
     print("\n=== Reconstructed Trace ===")
     tracebuilder.print_trace()
 
+    delta = treebuilder.compute_total_delta(tracebuilder)
+
+    print("\n=== Performance Impact ===")
+
+    if delta > 0:
+        print(f"+{delta:.2f} seconds (FASTER)")
+    elif delta < 0:
+        print(f"{delta:.2f} seconds (SLOWER)")
+    else:
+        print(f"SAME")
+
 
 if __name__ == "__main__":
     main()

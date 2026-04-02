@@ -63,7 +63,7 @@ class TreeBuilder:
 
         visited.add(first_src)
 
-        print(f"[DECIDE] {first_src}: INITIAL ROOT -> PHYSICAL")
+        # print(f"[DECIDE] {first_src}: INITIAL ROOT -> PHYSICAL")
 
         # Step 2: process all snapshots (dst nodes)
         for cmd in snapshot_cmds:
@@ -91,15 +91,15 @@ class TreeBuilder:
                 node.is_virtual = False
                 accumulated_exec_time = 0.0
 
-                print(f"[DECIDE] {node_id}: snapshot={snapshot_time:.3f}, "
-                    f"effective_exec={effective_exec_time:.3f} -> PHYSICAL")
+                # print(f"[DECIDE] {node_id}: snapshot={snapshot_time:.3f}, "
+                #     f"effective_exec={effective_exec_time:.3f} -> PHYSICAL")
 
             else:
                 node.is_virtual = True
                 accumulated_exec_time = effective_exec_time
 
-                print(f"[DECIDE] {node_id}: snapshot={snapshot_time:.3f}, "
-                    f"effective_exec={effective_exec_time:.3f} -> VIRTUAL")
+                # print(f"[DECIDE] {node_id}: snapshot={snapshot_time:.3f}, "
+                #     f"effective_exec={effective_exec_time:.3f} -> VIRTUAL")
 
             visited.add(node_id)
 
@@ -109,6 +109,74 @@ class TreeBuilder:
                 raise ValueError(f"[Annotate] Node {node_id} missing V/P assignment")
 
         print(f"[Annotate] All {len(visited)} nodes assigned successfully")
+
+    def compute_replay_time(self, node_id, trace_builder):
+        if node_id not in self.nodes:
+            raise ValueError(f"[Replay] Node {node_id} not found")
+
+        total = 0.0
+        node = self.nodes[node_id]
+
+        # Walk up until physical node
+        while node is not None and node.is_virtual:
+            parent = node.parent
+
+            if parent is None:
+                raise ValueError("[Replay] Reached root without physical node")
+
+            src_id = parent.node_id
+            dst_id = node.node_id
+
+            # Find matching snapshot in trace
+            found = False
+
+            for cmd in trace_builder.commands:
+                if cmd.cmd_type.value != "snapshot":
+                    continue
+
+                if cmd.src_id == src_id and cmd.dst_id == dst_id:
+                    if cmd.execution_time is None:
+                        raise ValueError(
+                            f"[Replay] Missing execution time for {src_id} -> {dst_id}"
+                        )
+
+                    total += cmd.execution_time
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(
+                    f"[Replay] Snapshot {src_id} -> {dst_id} not found in trace"
+                )
+
+            node = parent  # move upward
+
+        return total
+    
+    def compute_total_delta(self, trace_builder):
+        total_saved = 0.0
+        total_extra = 0.0
+
+        for cmd in trace_builder.commands:
+
+            if cmd.cmd_type.value == "snapshot":
+                dst = cmd.dst_id
+                node = self.nodes[dst]
+
+                snapshot_time = 0.0017 * cmd.vmrss_mb + 0.05
+
+                if node.is_virtual:
+                    total_saved += snapshot_time
+
+            elif cmd.cmd_type.value == "restore":
+                dst = cmd.dst_id
+                node = self.nodes[dst]
+
+                if node.is_virtual:
+                    replay_time = self.compute_replay_time(dst, trace_builder)
+                    total_extra += replay_time
+
+        return total_saved - total_extra
 
     def build_from_events(self, events):
         for event in events:
