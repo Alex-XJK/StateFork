@@ -143,6 +143,7 @@ class TreeBuilder:
     def compute_total_delta(self, trace_builder):
         total_saved = 0.0
         total_extra = 0.0
+        total_command_execution_time = 0.0
 
         for cmd in trace_builder.commands:
 
@@ -150,7 +151,12 @@ class TreeBuilder:
                 dst = cmd.dst_id
                 node = self.nodes[dst]
 
-                snapshot_time = 0.0017 * cmd.vmrss_mb + 0.05
+                exec_t = cmd.execution_time if cmd.execution_time is not None else 0.0
+                vmrss = cmd.vmrss_mb
+                snapshot_time = (
+                    (0.0017 * vmrss + 0.05) if vmrss is not None else 0.0
+                )
+                total_command_execution_time += exec_t + snapshot_time
 
                 if node.is_virtual:
                     total_saved += snapshot_time
@@ -163,7 +169,7 @@ class TreeBuilder:
                     replay_time = self.compute_replay_time(dst)
                     total_extra += replay_time
 
-        return total_saved - total_extra
+        return total_saved - total_extra, total_command_execution_time
 
     def build_from_events(self, events):
         for event in events:
