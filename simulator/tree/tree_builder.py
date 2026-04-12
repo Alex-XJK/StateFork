@@ -84,6 +84,8 @@ class TreeBuilder:
             if exec_time is None or vmrss is None:
                 raise ValueError(f"[Annotate] Missing data for node {node_id}")
 
+            self.nodes[cmd.src_id].execution_time[cmd.dst_id] = exec_time
+
             snapshot_time = 0.0017 * vmrss + 0.05
             effective_exec_time = accumulated_exec_time + exec_time
 
@@ -110,7 +112,7 @@ class TreeBuilder:
 
         print(f"[Annotate] All {len(visited)} nodes assigned successfully")
 
-    def compute_replay_time(self, node_id, trace_builder):
+    def compute_replay_time(self, node_id):
         if node_id not in self.nodes:
             raise ValueError(f"[Replay] Node {node_id} not found")
 
@@ -124,30 +126,15 @@ class TreeBuilder:
             if parent is None:
                 raise ValueError("[Replay] Reached root without physical node")
 
-            src_id = parent.node_id
             dst_id = node.node_id
+            t = parent.execution_time.get(dst_id)
 
-            # Find matching snapshot in trace
-            found = False
-
-            for cmd in trace_builder.commands:
-                if cmd.cmd_type.value != "snapshot":
-                    continue
-
-                if cmd.src_id == src_id and cmd.dst_id == dst_id:
-                    if cmd.execution_time is None:
-                        raise ValueError(
-                            f"[Replay] Missing execution time for {src_id} -> {dst_id}"
-                        )
-
-                    total += cmd.execution_time
-                    found = True
-                    break
-
-            if not found:
+            if t is None:
                 raise ValueError(
-                    f"[Replay] Snapshot {src_id} -> {dst_id} not found in trace"
+                    f"[Replay] No execution time recorded for {parent.node_id} -> {dst_id}"
                 )
+
+            total += t
 
             node = parent  # move upward
 
@@ -173,7 +160,7 @@ class TreeBuilder:
                 node = self.nodes[dst]
 
                 if node.is_virtual:
-                    replay_time = self.compute_replay_time(dst, trace_builder)
+                    replay_time = self.compute_replay_time(dst)
                     total_extra += replay_time
 
         return total_saved - total_extra

@@ -5,7 +5,8 @@ class Node:
         self.children = []
 
         self.is_virtual = None   # True = virtual, False = physical
-        self.execution_time = None
+        # dst_node_id -> measured execution time for snapshot self -> dst
+        self.execution_time = {}
 
     def add_child(self, child_node):
         self.children.append(child_node)
