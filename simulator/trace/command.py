@@ -18,8 +18,8 @@ class Command:
     def __repr__(self):
         extra = ""
         if self.execution_time is not None:
-            extra += f", t={self.execution_time:.2f}"
+            extra += f", t={self.execution_time:.5f}"
         if self.vmrss_mb is not None:
-            extra += f", mem={self.vmrss_mb}MB"
+            extra += f", mem={self.vmrss_mb:.5f}MB"
 
         return f"{self.cmd_type.value.upper()}({self.src_id} -> {self.dst_id}{extra})"
