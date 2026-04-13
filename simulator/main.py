@@ -32,7 +32,9 @@ def main():
     print("\n=== Reconstructed Trace ===")
     tracebuilder.print_trace()
 
-    delta, total_trace_time = treebuilder.compute_total_delta(tracebuilder)
+    delta, total_trace_time, bytes_saved, total_bytes = (
+        treebuilder.compute_total_delta(tracebuilder)
+    )
 
     print("\n=== Performance Impact ===")
 
@@ -47,6 +49,12 @@ def main():
         print(f"{pct:+.2f}%({delta:.2f} s) ({tag})")
     else:
         print("N/A (zero baseline trace time)")
+
+    if total_bytes > 0:
+        pct_mem = 100.0 * bytes_saved / total_bytes
+        print(f"{pct_mem:+.2f}%({bytes_saved} B) (memory saved)")
+    else:
+        print("N/A (zero baseline restore stats bytes)")
 
 
 if __name__ == "__main__":

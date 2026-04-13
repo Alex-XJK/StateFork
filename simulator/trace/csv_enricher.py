@@ -22,6 +22,8 @@ class CSVEnricher:
         start_time = None
         end_time = None
         vmrss = None
+        # Last restore_stats_size seen in this checkpoint block (cumulative meter; may repeat).
+        last_restore_stats_cumulative = None
 
         def flush():
             if current_id and start_time and end_time:
@@ -29,7 +31,8 @@ class CSVEnricher:
                 self.node_sequence.append({
                     "node_id": current_id,
                     "execution_time": exec_time,
-                    "vmrss_mb": vmrss
+                    "vmrss_mb": vmrss,
+                    "restore_stats_cumulative_last": last_restore_stats_cumulative,
                 })
 
         with open(file_path, "r") as f:
@@ -45,6 +48,7 @@ class CSVEnricher:
                     start_time = None
                     end_time = None
                     vmrss = None
+                    last_restore_stats_cumulative = None
 
                 # parse times
                 if row.get("command_execution_start_time"):
@@ -57,7 +61,27 @@ class CSVEnricher:
                 if row.get("ckptlite_snapshot_vmrss_mb"):
                     vmrss = float(row["ckptlite_snapshot_vmrss_mb"])
 
+                # Last non-empty restore_stats_size in this block wins (also largest if monotone).
+                rss = row.get("restore_stats_size")
+                if rss is not None and str(rss).strip() != "":
+                    last_restore_stats_cumulative = float(rss)
+
             flush()
+
+        self._apply_restore_stats_deltas()
+
+    def _apply_restore_stats_deltas(self):
+        """Cumulative restore_stats_size -> per-node delta (current last minus previous last)."""
+        prev_cumulative = 0.0
+        for node in self.node_sequence:
+            cum_last = node.get("restore_stats_cumulative_last")
+            if cum_last is not None:
+                delta = cum_last - prev_cumulative
+                prev_cumulative = cum_last
+            else:
+                delta = 0.0
+            node["restore_stats_size"] = int(round(delta))
+            del node["restore_stats_cumulative_last"]
 
     def attach_to_trace(self):
         node_idx = 0
@@ -83,5 +107,6 @@ class CSVEnricher:
 
             cmd.execution_time = node["execution_time"]
             cmd.vmrss_mb = node["vmrss_mb"]
+            cmd.restore_stats_size = node["restore_stats_size"]
 
             node_idx += 1

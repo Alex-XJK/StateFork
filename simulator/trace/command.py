@@ -14,6 +14,8 @@ class Command:
 
         self.execution_time = None
         self.vmrss_mb = None
+        # Bytes of restore stats attributed to this snapshot (delta from cumulative CSV).
+        self.restore_stats_size = None
 
     def __repr__(self):
         extra = ""
@@ -21,5 +23,7 @@ class Command:
             extra += f", t={self.execution_time:.5f}"
         if self.vmrss_mb is not None:
             extra += f", mem={self.vmrss_mb:.5f}MB"
+        if self.restore_stats_size is not None:
+            extra += f", restore_sz={self.restore_stats_size}"
 
         return f"{self.cmd_type.value.upper()}({self.src_id} -> {self.dst_id}{extra})"

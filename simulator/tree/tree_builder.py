@@ -144,6 +144,8 @@ class TreeBuilder:
         total_saved = 0.0
         total_extra = 0.0
         total_command_execution_time = 0.0
+        bytes_saved = 0
+        total_bytes = 0
 
         for cmd in trace_builder.commands:
 
@@ -158,8 +160,12 @@ class TreeBuilder:
                 )
                 total_command_execution_time += exec_t + snapshot_time
 
+                rsz = cmd.restore_stats_size if cmd.restore_stats_size is not None else 0
+                total_bytes += rsz
+
                 if node.is_virtual:
                     total_saved += snapshot_time
+                    bytes_saved += rsz
 
             elif cmd.cmd_type.value == "restore":
                 dst = cmd.dst_id
@@ -169,7 +175,12 @@ class TreeBuilder:
                     replay_time = self.compute_replay_time(dst)
                     total_extra += replay_time
 
-        return total_saved - total_extra, total_command_execution_time
+        return (
+            total_saved - total_extra,
+            total_command_execution_time,
+            bytes_saved,
+            total_bytes,
+        )
 
     def build_from_events(self, events):
         for event in events:
