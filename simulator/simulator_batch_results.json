@@ -1,0 +1,656 @@
+{
+  "artifacts_root": "/mydata/checkpoint-artifacts/artifacts",
+  "generated_at": "2026-04-19T07:10:01.161189+00:00",
+  "generated_by": "StateFork/simulator/batch_simulate_artifacts.py",
+  "tests": [
+    {
+      "name": "blind-maze-explorer-5x5",
+      "artifact_folder": "ckptlite_trace__blind-maze-explorer-5x5__20260405__1719500400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.030878",
+      "saved_memory": "+39.288935"
+    },
+    {
+      "name": "blind-maze-explorer-algorithm",
+      "artifact_folder": "ckptlite_trace__blind-maze-explorer-algorithm__20260322__1731290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "blind-maze-explorer-algorithm.easy",
+      "artifact_folder": "ckptlite_trace__blind-maze-explorer-algorithm.easy__20260405__1719500400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.010191",
+      "saved_memory": "+14.718068"
+    },
+    {
+      "name": "blind-maze-explorer-algorithm.hard",
+      "artifact_folder": "ckptlite_trace__blind-maze-explorer-algorithm.hard__20260322__1731290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "build-initramfs-qemu",
+      "artifact_folder": "ckptlite_trace__build-initramfs-qemu__20260322__1731290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "build-linux-kernel-qemu",
+      "artifact_folder": "ckptlite_trace__build-linux-kernel-qemu__20260322__1731290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "build-tcc-qemu",
+      "artifact_folder": "ckptlite_trace__build-tcc-qemu__20260322__1731290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "cartpole-rl-training",
+      "artifact_folder": "ckptlite_trace__cartpole-rl-training__20260418__1648550400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.578255",
+      "saved_memory": "+70.204979"
+    },
+    {
+      "name": "chess-best-move",
+      "artifact_folder": "ckptlite_trace__chess-best-move__20260322__1739510400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "conda-env-conflict-resolution",
+      "artifact_folder": "ckptlite_trace__conda-env-conflict-resolution__20260418__2031000400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.057688",
+      "saved_memory": "+0.026126"
+    },
+    {
+      "name": "configure-git-webserver",
+      "artifact_folder": "hybrid_mcts_podman__configure-git-webserver__20260415__2139090400",
+      "trace_type": "hybrid_mcts_podman",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-04-16__01-51-05/configure-git-webserver/configure-git-webserver.1-of-1/agent-logs/state/events.ndjson: [Annotate] Missing data for node cf7b750e",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "count-dataset-tokens",
+      "artifact_folder": "ckptlite_trace__count-dataset-tokens__20260322__1740100400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "crack-7z-hash",
+      "artifact_folder": "ckptlite_trace__crack-7z-hash__20260417__1607370400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.879649",
+      "saved_memory": "+65.971963"
+    },
+    {
+      "name": "crack-7z-hash.easy",
+      "artifact_folder": "ckptlite_trace__crack-7z-hash.easy__20260417__1607370400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.332025",
+      "saved_memory": "+74.206786"
+    },
+    {
+      "name": "crack-7z-hash.hard",
+      "artifact_folder": "ckptlite_trace__crack-7z-hash.hard__20260322__1747560400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "create-bucket",
+      "artifact_folder": "ckptlite_trace__create-bucket__20260417__0203030400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-04-17__06-12-00/create-bucket/create-bucket.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "cron-broken-network",
+      "artifact_folder": "ckptlite_trace__cron-broken-network__20260322__1748420400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "csv-to-parquet",
+      "artifact_folder": "ckptlite_trace__csv-to-parquet__20260417__1607370400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.099456",
+      "saved_memory": "+1.293471"
+    },
+    {
+      "name": "decommissioning-service-with-sensitive-data",
+      "artifact_folder": "ckptlite_trace__decommissioning-service-with-sensitive-data__20260322__1754460400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "download-youtube",
+      "artifact_folder": "ckptlite_trace__download-youtube__20260322__1916450400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "eval-mteb",
+      "artifact_folder": "docker_mcts__eval-mteb__20260415__0027230400",
+      "trace_type": "docker_mcts",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-04-15__04-37-15/eval-mteb/eval-mteb.1-of-1/agent-logs/state/events.ndjson: [Annotate] Missing data for node 47e2188d",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "eval-mteb.hard",
+      "artifact_folder": "ckptlite_trace__eval-mteb.hard__20260417__0203030400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.085686",
+      "saved_memory": "+89.795224"
+    },
+    {
+      "name": "extract-moves-from-video",
+      "artifact_folder": "ckptlite_trace__extract-moves-from-video__20260322__1916450400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "extract-safely",
+      "artifact_folder": "ckptlite_trace__extract-safely__20260417__1607370400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+89.081192",
+      "saved_memory": "+100"
+    },
+    {
+      "name": "fibonacci-server",
+      "artifact_folder": "ckptlite_trace__fibonacci-server__20260405__2222430400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.052262",
+      "saved_memory": "+0.323255"
+    },
+    {
+      "name": "fix-git",
+      "artifact_folder": "ckptlite_trace__fix-git__20260322__1809540400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "fix-pandas-version",
+      "artifact_folder": "ckptlite_trace__fix-pandas-version__20260417__0211140400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "fix-permissions",
+      "artifact_folder": "ckptlite_trace__fix-permissions__20260417__0211370400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+88.19247",
+      "saved_memory": "+100"
+    },
+    {
+      "name": "get-bitcoin-nodes",
+      "artifact_folder": "ckptlite_trace__get-bitcoin-nodes__20260417__0211370400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+12.512604",
+      "saved_memory": "+89.390493"
+    },
+    {
+      "name": "git-multibranch",
+      "artifact_folder": "ckptlite_trace__git-multibranch__20260322__1815340400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "git-workflow-hack",
+      "artifact_folder": "ckptlite_trace__git-workflow-hack__20260418__0242500400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+2.37258",
+      "saved_memory": "+35.01992"
+    },
+    {
+      "name": "gpt2-codegolf",
+      "artifact_folder": "ckptlite_trace__gpt2-codegolf__20260322__1815340400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "grid-pattern-transform",
+      "artifact_folder": "ckptlite_trace__grid-pattern-transform__20260322__1925210400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "hello-world",
+      "artifact_folder": "ckptlite_trace__hello-world__20260417__0104490400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+89.235315",
+      "saved_memory": "+100"
+    },
+    {
+      "name": "heterogeneous-dates",
+      "artifact_folder": "ckptlite_trace__heterogeneous-dates__20260418__1630450400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+53.248859",
+      "saved_memory": "+78.712057"
+    },
+    {
+      "name": "hf-model-inference",
+      "artifact_folder": "ckptlite_trace__hf-model-inference__20260322__1925210400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "incompatible-python-fasttext",
+      "artifact_folder": "ckptlite_trace__incompatible-python-fasttext__20260417__0220270400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+7.338146",
+      "saved_memory": "+37.091863"
+    },
+    {
+      "name": "incompatible-python-fasttext.base_with_hint",
+      "artifact_folder": "ckptlite_trace__incompatible-python-fasttext.base_with_hint__20260417__0220270400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+2.949802",
+      "saved_memory": "+27.642921"
+    },
+    {
+      "name": "intrusion-detection",
+      "artifact_folder": "ckptlite_trace__intrusion-detection__20260322__1924580400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-03-22__23-33-08/intrusion-detection/intrusion-detection.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "jupyter-notebook-server",
+      "artifact_folder": "ckptlite_trace__jupyter-notebook-server__20260322__1837530400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "modernize-fortran-build",
+      "artifact_folder": "ckptlite_trace__modernize-fortran-build__20260417__1618260400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+64.062512",
+      "saved_memory": "+75.836997"
+    },
+    {
+      "name": "new-encrypt-command",
+      "artifact_folder": "ckptlite_trace__new-encrypt-command__20260417__0229470400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+34.821692",
+      "saved_memory": "+58.598423"
+    },
+    {
+      "name": "nginx-request-logging",
+      "artifact_folder": "ckptlite_trace__nginx-request-logging__20260322__1837540400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "oom",
+      "artifact_folder": "ckptlite_trace__oom__20260322__1837540400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "no agent-logs/state/events.ndjson under /mydata/checkpoint-artifacts/artifacts/ckptlite_trace__oom__20260322__1837540400/results/2026-03-22__22-46-36",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "openssl-selfsigned-cert",
+      "artifact_folder": "ckptlite_trace__openssl-selfsigned-cert__20260417__0229480400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+35.105035",
+      "saved_memory": "+65.858501"
+    },
+    {
+      "name": "organization-json-generator",
+      "artifact_folder": "ckptlite_trace__organization-json-generator__20260322__1846320400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "password-recovery",
+      "artifact_folder": "ckptlite_trace__password-recovery__20260322__1939150400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "path-tracing",
+      "artifact_folder": "ckptlite_trace__path-tracing__20260418__1630450400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+52.806867",
+      "saved_memory": "+74.496875"
+    },
+    {
+      "name": "path-tracing-reverse",
+      "artifact_folder": "ckptlite_trace__path-tracing-reverse__20260322__1939150400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "play-zork",
+      "artifact_folder": "ckptlite_trace__play-zork__20260405__1719500400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.279107",
+      "saved_memory": "+78.910474"
+    },
+    {
+      "name": "polyglot-c-py",
+      "artifact_folder": "ckptlite_trace__polyglot-c-py__20260322__1939150400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "polyglot-rust-c",
+      "artifact_folder": "ckptlite_trace__polyglot-rust-c__20260322__1947110400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "processing-pipeline",
+      "artifact_folder": "ckptlite_trace__processing-pipeline__20260417__0229480400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+79.406963",
+      "saved_memory": "+89.453632"
+    },
+    {
+      "name": "prove-plus-comm",
+      "artifact_folder": "ckptlite_trace__prove-plus-comm__20260417__1618260400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+67.444351",
+      "saved_memory": "+84.514224"
+    },
+    {
+      "name": "pytorch-model-cli",
+      "artifact_folder": "ckptlite_trace__pytorch-model-cli__20260417__0238380400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.933326",
+      "saved_memory": "+2.149031"
+    },
+    {
+      "name": "pytorch-model-cli.easy",
+      "artifact_folder": "ckptlite_trace__pytorch-model-cli.easy__20260417__0238380400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.919295",
+      "saved_memory": "+30.703156"
+    },
+    {
+      "name": "pytorch-model-cli.hard",
+      "artifact_folder": "ckptlite_trace__pytorch-model-cli.hard__20260417__0238460400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.926468",
+      "saved_memory": "+72.169134"
+    },
+    {
+      "name": "qemu-alpine-ssh",
+      "artifact_folder": "ckptlite_trace__qemu-alpine-ssh__20260405__1712180400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "qemu-startup",
+      "artifact_folder": "ckptlite_trace__qemu-startup__20260411__0112290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-04-11__05-24-44/qemu-startup/qemu-startup.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "raman-fitting",
+      "artifact_folder": "ckptlite_trace__raman-fitting__20260322__2127070400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "raman-fitting.easy",
+      "artifact_folder": "ckptlite_trace__raman-fitting.easy__20260322__2127070400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "reshard-c4-data",
+      "artifact_folder": "ckptlite_trace__reshard-c4-data__20260322__2127070400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "run-pdp11-code",
+      "artifact_folder": "ckptlite_trace__run-pdp11-code__20260322__2012030400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "sanitize-git-repo",
+      "artifact_folder": "ckptlite_trace__sanitize-git-repo__20260322__2012030400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "sanitize-git-repo.hard",
+      "artifact_folder": "ckptlite_trace__sanitize-git-repo.hard__20260322__2012030400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "security-vulhub-minio",
+      "artifact_folder": "ckptlite_trace__security-vulhub-minio__20260322__2012030400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "simple-sheets-put",
+      "artifact_folder": "ckptlite_trace__simple-sheets-put__20260322__2020190400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-03-23__00-29-39/simple-sheets-put/simple-sheets-put.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "simple-web-scraper",
+      "artifact_folder": "ckptlite_trace__simple-web-scraper__20260322__2020460400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-03-23__00-29-34/simple-web-scraper/simple-web-scraper.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "solana-data",
+      "artifact_folder": "ckptlite_trace__solana-data__20260322__2020470400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "sqlite-db-truncate",
+      "artifact_folder": "ckptlite_trace__sqlite-db-truncate__20260322__2021020400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "sqlite-with-gcov",
+      "artifact_folder": "ckptlite_trace__sqlite-with-gcov__20260418__1523490400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.102684",
+      "saved_memory": "+0.550817"
+    },
+    {
+      "name": "super-benchmark-upet",
+      "artifact_folder": "ckptlite_trace__super-benchmark-upet__20260322__2029180400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": true,
+      "failure_reason": "results/2026-03-23__00-38-58/super-benchmark-upet/super-benchmark-upet.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
+      "saved_speed": null,
+      "saved_memory": null
+    },
+    {
+      "name": "swe-bench-astropy-1",
+      "artifact_folder": "ckptlite_trace__swe-bench-astropy-1__20260322__2029200400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "swe-bench-astropy-2",
+      "artifact_folder": "ckptlite_trace__swe-bench-astropy-2__20260322__2030200400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "swe-bench-fsspec",
+      "artifact_folder": "ckptlite_trace__swe-bench-fsspec__20260322__2038330400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "swe-bench-langcodes",
+      "artifact_folder": "ckptlite_trace__swe-bench-langcodes__20260322__2038360400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "tmux-advanced-workflow",
+      "artifact_folder": "ckptlite_trace__tmux-advanced-workflow__20260417__0246580400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+22.269622",
+      "saved_memory": "+84.953807"
+    },
+    {
+      "name": "train-fasttext",
+      "artifact_folder": "ckptlite_trace__train-fasttext__20260322__2039000400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    },
+    {
+      "name": "vim-terminal-task",
+      "artifact_folder": "ckptlite_trace__vim-terminal-task__20260411__0112290400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.840069",
+      "saved_memory": "+77.188035"
+    },
+    {
+      "name": "write-compressor",
+      "artifact_folder": "ckptlite_trace__write-compressor__20260322__2047180400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0",
+      "saved_memory": "+0"
+    }
+  ]
+}
