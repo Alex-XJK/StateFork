@@ -3,7 +3,8 @@
 Run the StateFork simulator over real artifact data under artifacts/artifacts/.
 
 For each distinct benchmark *test name* (second segment of folder names split by __),
-only the artifact folder with the latest date+time (last two segments) is used.
+only the artifact folder with trace_type=ckptlite_trace and latest date+time
+(last two segments) is used.
 
 Writes JSON with signed percentage strings only (no absolute time or bytes), matching
 simulator/main.py: time is signed % of total trace time; memory is % of restore bytes saved
@@ -30,6 +31,8 @@ if str(_SIM_ROOT) not in sys.path:
 from trace import CSVEnricher, TraceBuilder  # noqa: E402
 from tree.tree_builder import TreeBuilder  # noqa: E402
 from utils.ndjson_reader import read_ndjson  # noqa: E402
+
+TARGET_TRACE_TYPE = "ckptlite_trace"
 
 
 def format_signed_percent(value: float | None) -> str | None:
@@ -58,20 +61,26 @@ def parse_artifact_dirname(name: str) -> tuple[str, str, tuple[str, str]] | None
     return trace_type, test_name, (date_s, time_s)
 
 
-def pick_latest_artifact_dirs(artifacts_root: Path) -> dict[str, Path]:
-    """Map test_name -> Path to newest artifact folder for that test."""
+def pick_latest_artifact_dirs(
+    artifacts_root: Path, trace_type: str
+) -> tuple[dict[str, Path], int]:
+    """Map test_name -> newest artifact folder, filtered by trace type."""
     by_test: dict[str, tuple[tuple[str, str], Path]] = {}
+    skipped_other_trace_types = 0
     for p in sorted(artifacts_root.iterdir()):
         if not p.is_dir():
             continue
         parsed = parse_artifact_dirname(p.name)
         if parsed is None:
             continue
-        _trace, test_name, key = parsed
+        parsed_trace, test_name, key = parsed
+        if parsed_trace != trace_type:
+            skipped_other_trace_types += 1
+            continue
         prev = by_test.get(test_name)
         if prev is None or key > prev[0]:
             by_test[test_name] = (key, p)
-    return {name: tup[1] for name, tup in by_test.items()}
+    return {name: tup[1] for name, tup in by_test.items()}, skipped_other_trace_types
 
 
 def latest_results_run_dir(artifact_path: Path) -> Path | None:
@@ -240,7 +249,7 @@ def main() -> int:
     root = args.artifacts_root.expanduser().resolve()
     out_path = args.output.expanduser().resolve()
 
-    latest = pick_latest_artifact_dirs(root)
+    latest, skipped_other_trace_types = pick_latest_artifact_dirs(root, TARGET_TRACE_TYPE)
     results: list[dict[str, Any]] = []
     for test_name in sorted(latest.keys()):
         folder = latest[test_name]
@@ -269,6 +278,8 @@ def main() -> int:
 
     payload = {
         "artifacts_root": str(root),
+        "trace_type_filter": TARGET_TRACE_TYPE,
+        "skipped_other_trace_type_folders": skipped_other_trace_types,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generated_by": "StateFork/simulator/batch_simulate_artifacts.py",
         "tests": results,

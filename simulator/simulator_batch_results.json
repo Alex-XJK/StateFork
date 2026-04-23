@@ -1,6 +1,8 @@
 {
   "artifacts_root": "/mydata/checkpoint-artifacts/artifacts",
-  "generated_at": "2026-04-20T06:12:33.233570+00:00",
+  "trace_type_filter": "ckptlite_trace",
+  "skipped_other_trace_type_folders": 363,
+  "generated_at": "2026-04-23T05:17:56.516911+00:00",
   "generated_by": "StateFork/simulator/batch_simulate_artifacts.py",
   "tests": [
     {
@@ -85,12 +87,11 @@
     },
     {
       "name": "configure-git-webserver",
-      "artifact_folder": "hybrid_mcts_podman__configure-git-webserver__20260415__2139090400",
-      "trace_type": "hybrid_mcts_podman",
-      "simulation_failed": true,
-      "failure_reason": "results/2026-04-16__01-51-05/configure-git-webserver/configure-git-webserver.1-of-1/agent-logs/state/events.ndjson: [Annotate] Missing data for node cf7b750e",
-      "saved_speed": null,
-      "saved_memory": null
+      "artifact_folder": "ckptlite_trace__configure-git-webserver__20260411__1924320400",
+      "trace_type": "ckptlite_trace",
+      "simulation_failed": false,
+      "saved_speed": "+0.520943",
+      "saved_memory": "+70.551437"
     },
     {
       "name": "count-dataset-tokens",
@@ -167,10 +168,10 @@
     },
     {
       "name": "eval-mteb",
-      "artifact_folder": "docker_mcts__eval-mteb__20260415__0027230400",
-      "trace_type": "docker_mcts",
+      "artifact_folder": "ckptlite_trace__eval-mteb__20260322__1756220400",
+      "trace_type": "ckptlite_trace",
       "simulation_failed": true,
-      "failure_reason": "results/2026-04-15__04-37-15/eval-mteb/eval-mteb.1-of-1/agent-logs/state/events.ndjson: [Annotate] Missing data for node 47e2188d",
+      "failure_reason": "results/2026-03-22__22-04-06/eval-mteb/eval-mteb.1-of-1/agent-logs/state/events.ndjson: [Annotate] No snapshot commands found",
       "saved_speed": null,
       "saved_memory": null
     },
@@ -386,11 +387,11 @@
     },
     {
       "name": "path-tracing",
-      "artifact_folder": "ckptlite_trace__path-tracing__20260418__1630450400",
+      "artifact_folder": "ckptlite_trace__path-tracing__20260422__2040340400",
       "trace_type": "ckptlite_trace",
       "simulation_failed": false,
-      "saved_speed": "+52.806867",
-      "saved_memory": "+74.496875"
+      "saved_speed": "+53.205411",
+      "saved_memory": "+76.481661"
     },
     {
       "name": "path-tracing-reverse",
