@@ -99,6 +99,24 @@ BRAND_COLORS: Dict[str, str] = {
 	"Firecracker": "tab:orange",  # orange
 }
 
+EXPORT_COLUMNS = [
+	"benchmark",
+	"chart",
+	"source_type",
+	"dataset",
+	"tool",
+	"input_csv",
+	"mem_mb",
+	"fs_mb",
+	"count",
+	"mean_ms",
+	"min_ms",
+	"q1_ms",
+	"median_ms",
+	"q3_ms",
+	"max_ms",
+]
+
 
 def _parse_rows(csv_path: str) -> List[dict]:
 	rows: List[dict] = []
@@ -204,47 +222,6 @@ def _aggregate_fsinit_only(rows: List[dict]) -> Tuple[List[float], Dict[float, D
 	return x_vals, stats_by_x
 
 
-def _aggregate_fs_growth(rows: List[dict]) -> Dict[Tuple[int, int], Tuple[List[float], Dict[float, Dict[str, float]]]]:
-	"""Aggregate for scenarios where mem_mb == 0 and filesystem grows: multiple configs (fs_init_mb, fs_delta_mb).
-
-	For each config, group by effective size x = fs_init_mb + fs_delta_mb * pair_idx, and collect
-	RESTORE times across repeats, then compute median/IQR/min/max.
-	"""
-	series: Dict[Tuple[int, int], Dict[float, List[float]]] = defaultdict(lambda: defaultdict(list))
-
-	for r in rows:
-		mem_mb = r["mem_mb"]
-		fs_init_mb = r["fs_init_mb"]
-		fs_delta_mb = r["fs_delta_mb"]
-		pair_idx = r.get("pair_idx", 0)
-		op = r["operation"]
-		val = r["elapsed_ms"]
-
-		if mem_mb == 0 and fs_delta_mb > 0 and op == "RESTORE":
-			x_val = float(fs_init_mb + fs_delta_mb * pair_idx)
-			series[(fs_init_mb, fs_delta_mb)][x_val].append(val)
-
-	result: Dict[Tuple[int, int], Tuple[List[float], Dict[float, Dict[str, float]]]] = {}
-	for key, x_map in series.items():
-		xs = sorted(x_map.keys())
-		stats_map: Dict[float, Dict[str, float]] = {}
-		for x in xs:
-			y = np.asarray(x_map[x], dtype=float)
-			q1, q3 = np.quantile(y, [0.25, 0.75])
-			stats_map[x] = {
-				"count": float(y.size),
-				"mean": float(np.mean(y)),
-				"median": float(np.median(y)),
-				"min": float(np.min(y)),
-				"q1": float(q1),
-				"q3": float(q3),
-				"max": float(np.max(y)),
-			}
-		result[key] = (xs, stats_map)
-
-	return result
-
-
 def _aggregate_mem_fs_equal(rows: List[dict]) -> Tuple[List[float], Dict[float, Dict[str, float]]]:
 	"""Aggregate scenarios where mem_mb == fs_init_mb and fs_delta_mb == 0 using RESTORE times."""
 	samples_by_size: Dict[int, List[float]] = defaultdict(list)
@@ -343,27 +320,77 @@ def _plot_reference_lines(
 		ax.plot(xs, ys, linestyle=linestyle, linewidth=1.5, alpha=alpha, color=color, label=name)
 
 
-def _plot_line_only(
-	ax: plt.Axes,
+def _append_distribution_rows(
+	export_rows: List[Dict[str, object]],
+	benchmark: str,
+	chart: str,
+	dataset: str,
+	input_csv: str,
 	xs: List[float],
 	stats_by_x: Dict[float, Dict[str, float]],
-	color: str,
-	label: str,
-	x_label: str,
-	linewidth: float = 1.6,
-	alpha: float = 0.95,
+	mem_from_x: bool,
+	fs_from_x: bool,
 ):
-	if not xs:
-		return
-	medians = [stats_by_x[x]["median"] for x in xs]
-	ax.plot(xs, medians, color=color, linewidth=linewidth, alpha=alpha, label=label)
-	ax.set_xlabel(x_label)
-	ax.set_ylabel("Restore time (ms)")
-	ax.grid(True, axis="y", linestyle=":", alpha=0.45)
+	for x in xs:
+		stats = stats_by_x[x]
+		export_rows.append({
+			"benchmark": benchmark,
+			"chart": chart,
+			"source_type": "measured",
+			"dataset": dataset,
+			"tool": "",
+			"input_csv": input_csv,
+			"mem_mb": x if mem_from_x else 0.0,
+			"fs_mb": x if fs_from_x else 0.0,
+			"count": int(stats["count"]),
+			"mean_ms": stats["mean"],
+			"min_ms": stats["min"],
+			"q1_ms": stats["q1"],
+			"median_ms": stats["median"],
+			"q3_ms": stats["q3"],
+			"max_ms": stats["max"],
+		})
+
+
+def _append_reference_rows(
+	export_rows: List[Dict[str, object]],
+	benchmark: str,
+	chart: str,
+	series: Dict[str, List[Tuple[float, float]]],
+):
+	for name, pts in series.items():
+		for x, median in sorted(pts, key=lambda t: t[0]):
+			export_rows.append({
+				"benchmark": benchmark,
+				"chart": chart,
+				"source_type": "reference",
+				"dataset": "",
+				"tool": name,
+				"input_csv": "",
+				"mem_mb": x if chart in ("mem_only", "mem_fs") else 0.0,
+				"fs_mb": x if chart in ("fsinit_only", "mem_fs") else 0.0,
+				"count": "",
+				"mean_ms": "",
+				"min_ms": "",
+				"q1_ms": "",
+				"median_ms": median,
+				"q3_ms": "",
+				"max_ms": "",
+			})
+
+
+def _write_export_csv(path: str, rows: List[Dict[str, object]]):
+	parent = os.path.dirname(os.path.abspath(path))
+	if parent:
+		os.makedirs(parent, exist_ok=True)
+	with open(path, "w", newline="") as f:
+		writer = csv.DictWriter(f, fieldnames=EXPORT_COLUMNS)
+		writer.writeheader()
+		writer.writerows(rows)
 
 
 def main():
-	parser = argparse.ArgumentParser(description="Visualize RESTORE latency (mem-only, fsInit-only, fsGrowth-only, mem==fs)")
+	parser = argparse.ArgumentParser(description="Visualize RESTORE latency (mem-only, fsInit-only, mem==fs)")
 	default_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "micro.csv"))
 	parser.add_argument("--csv", dest="csv_paths", nargs="+", default=None, help="One or more CSV files")
 	parser.add_argument("inputs", nargs="*", help="CSV file(s)")
@@ -372,6 +399,7 @@ def main():
 	parser.add_argument("--stats-only", dest="stats_only", action="store_true", help="Print mean/median for our data at major sizes and exit")
 	parser.add_argument("--max-mb", dest="max_mb", type=float, default=None, help="Upper limit in MB for plotting (applies to major 3 charts)")
 	parser.add_argument("--max-ms", dest="max_ms", type=float, default=None, help="Upper limit in milliseconds for Y-axis (applies to major 3 charts; data not dropped, just clipped)")
+	parser.add_argument("--export-csv", dest="export_csv", nargs="?", const="", default=None, help="Export plot-ready CSV data; optionally provide output path (default: OUTDIR/restore_plot_data.csv)")
 	args = parser.parse_args()
 
 	csv_list = args.csv_paths or args.inputs
@@ -455,9 +483,15 @@ def main():
 		outdir = os.path.abspath(args.outdir)
 	os.makedirs(outdir, exist_ok=True)
 
+	if args.export_csv == "":
+		export_csv = os.path.join(outdir, "restore_plot_data.csv")
+	elif args.export_csv is None:
+		export_csv = None
+	else:
+		export_csv = os.path.abspath(args.export_csv)
+
 	fig1 = ax1 = None  # mem-only
 	fig2 = ax2 = None  # fsInit-only
-	fig3 = ax3 = None  # fsGrowth-only
 	fig4 = ax4 = None  # mem==fs
 
 	# Color cycles for datasets other than the first; first dataset is forced to green
@@ -467,10 +501,7 @@ def main():
 	
 	def _dataset_color(idx: int, cycle: List[str]) -> str:
 		return "tab:green" if idx == 0 else cycle[(idx - 1) % len(cycle)]
-	fsgrowth_cycle = [
-		"tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
-		"tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan",
-	]
+	export_rows: List[Dict[str, object]] = []
 
 	for i, (csv_path, ds_label) in enumerate(zip(csv_list, labels)):
 		rows = _parse_rows(csv_path)
@@ -480,7 +511,6 @@ def main():
 
 		mem_xs, mem_stats = _aggregate_mem_only(rows)
 		fs_xs, fs_stats = _aggregate_fsinit_only(rows)
-		fs_growth = _aggregate_fs_growth(rows)
 		memfs_xs, memfs_stats = _aggregate_mem_fs_equal(rows)
 
 		# Do not drop data points; rely on axis limits to crop visuals
@@ -500,6 +530,7 @@ def main():
 				label=ds_label,
 				x_label="VmRSS (MB, averaged across repeats)",
 			)
+			_append_distribution_rows(export_rows, "restore", "mem_only", ds_label, csv_path, mem_xs, mem_stats, mem_from_x=True, fs_from_x=False)
 			_apply_major_limits(ax1)
 
 		if not fs_xs:
@@ -517,28 +548,8 @@ def main():
 				label=ds_label,
 				x_label="fs_init_mb (MB)",
 			)
+			_append_distribution_rows(export_rows, "restore", "fsinit_only", ds_label, csv_path, fs_xs, fs_stats, mem_from_x=False, fs_from_x=True)
 			_apply_major_limits(ax2)
-
-		if not fs_growth:
-			print(f"[{ds_label}] no fsGrowth-only dataset (mem_mb=0, fs_delta_mb>0)")
-		else:
-			if ax3 is None:
-				fig3, ax3 = plt.subplots(figsize=(9.6, 5.4))
-				ax3.set_title("Restore time vs evolving filesystem size (fsGrowth-only)")
-			base_offset = (i * 3) % len(fsgrowth_cycle)
-			ci = 0
-			for (fs_init_mb, fs_delta_mb), (xs, stats_map) in sorted(fs_growth.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-				color = fsgrowth_cycle[(base_offset + ci) % len(fsgrowth_cycle)]
-				label = f"{ds_label}: {fs_init_mb}+N*{fs_delta_mb}MB"
-				_plot_line_only(
-					ax3,
-					xs,
-					stats_map,
-					color=color,
-					label=label,
-					x_label="Env size (MB) = fs_init_mb + fs_delta_mb * pair_idx",
-				)
-				ci += 1
 
 		if not memfs_xs:
 			pass
@@ -555,30 +566,33 @@ def main():
 				label=ds_label,
 				x_label="Size (MB) where mem_mb == fs_init_mb and fs_delta_mb == 0",
 			)
+			_append_distribution_rows(export_rows, "restore", "mem_fs", ds_label, csv_path, memfs_xs, memfs_stats, mem_from_x=True, fs_from_x=True)
 			_apply_major_limits(ax4)
 
 	if ax1 is not None:
 		_plot_reference_lines(ax1, REF_DATA_RESTORE.get("mem_only", {}))
+		_append_reference_rows(export_rows, "restore", "mem_only", REF_DATA_RESTORE.get("mem_only", {}))
 		ax1.legend(loc="best")
 		mem_out = os.path.join(outdir, "restore_mem_only.png")
 		fig1.tight_layout(); fig1.savefig(mem_out, dpi=160); print(f"Saved: {mem_out}")
 
 	if ax2 is not None:
 		_plot_reference_lines(ax2, REF_DATA_RESTORE.get("fsinit_only", {}))
+		_append_reference_rows(export_rows, "restore", "fsinit_only", REF_DATA_RESTORE.get("fsinit_only", {}))
 		ax2.legend(loc="best")
 		fs_out = os.path.join(outdir, "restore_fsinit_only.png")
 		fig2.tight_layout(); fig2.savefig(fs_out, dpi=160); print(f"Saved: {fs_out}")
 
-	if ax3 is not None:
-		ax3.legend(loc="best", ncol=2)
-		growth_out = os.path.join(outdir, "restore_fsgrowth_only.png")
-		fig3.tight_layout(); fig3.savefig(growth_out, dpi=160); print(f"Saved: {growth_out}")
-
 	if ax4 is not None:
 		_plot_reference_lines(ax4, REF_DATA_RESTORE.get("mem_fs", {}))
+		_append_reference_rows(export_rows, "restore", "mem_fs", REF_DATA_RESTORE.get("mem_fs", {}))
 		ax4.legend(loc="best")
 		memfs_out = os.path.join(outdir, "restore_mem_fs.png")
 		fig4.tight_layout(); fig4.savefig(memfs_out, dpi=160); print(f"Saved: {memfs_out}")
+
+	if export_csv is not None:
+		_write_export_csv(export_csv, export_rows)
+		print(f"Saved: {export_csv}")
 
 	# No interactive show in CLI mode
 
