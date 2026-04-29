@@ -10,6 +10,17 @@ from typing import Dict, List, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 
+plt.rcParams.update({
+	"font.size": 11,
+	"axes.titlesize": 13,
+	"axes.labelsize": 12,
+	"legend.fontsize": 9,
+	"xtick.labelsize": 10,
+	"ytick.labelsize": 10,
+	"pdf.fonttype": 42,
+	"ps.fonttype": 42,
+})
+
 
 # Built-in reference datasets for overlay (line-only, no distribution).
 # Units: x in MB, y in milliseconds.
@@ -100,6 +111,8 @@ BRAND_COLORS: Dict[str, str] = {
 	"gVisor": "navy",             # dark blue
 	"Firecracker": "tab:orange",  # orange
 }
+
+OURS_COLOR = "tab:green"
 
 EXPORT_COLUMNS = [
 	"benchmark",
@@ -278,28 +291,45 @@ def _plot_distribution_with_median(
 	color: str,
 	label: str,
 	x_label: str,
+	is_ours: bool = False,
 ):
 	medians = [stats_by_x[x]["median"] for x in xs]
 	q1s = [stats_by_x[x]["q1"] for x in xs]
 	q3s = [stats_by_x[x]["q3"] for x in xs]
 	mins = [stats_by_x[x]["min"] for x in xs]
 	maxs = [stats_by_x[x]["max"] for x in xs]
+	linewidth = 2.4 if is_ours else 1.5
+	scatter_size = 44 if is_ours else 30
+	iqr_width = 8 if is_ours else 5
+	whisker_width = 1.4 if is_ours else 1.0
+	alpha = 0.95 if is_ours else 0.75
 
 	# Draw whiskers (min-max) with low alpha
 	for x, y_min, y_max in zip(xs, mins, maxs):
-		ax.vlines(x, y_min, y_max, colors=color, alpha=0.3, linewidth=1)
+		ax.vlines(x, y_min, y_max, colors=color, alpha=0.32, linewidth=whisker_width, zorder=2 if is_ours else 1)
 
 	# Draw interquartile range (Q1-Q3) as thicker, semi-transparent line
 	for x, y_q1, y_q3 in zip(xs, q1s, q3s):
-		ax.vlines(x, y_q1, y_q3, colors=color, alpha=0.45, linewidth=6)
+		ax.vlines(x, y_q1, y_q3, colors=color, alpha=0.5 if is_ours else 0.35, linewidth=iqr_width, zorder=3 if is_ours else 2)
 
 	# Median points and trend line
-	ax.plot(xs, medians, color=color, linewidth=1.0)
-	ax.scatter(xs, medians, color=color, s=28, label=label, zorder=3)
+	ax.plot(xs, medians, color=color, linewidth=linewidth, alpha=alpha, zorder=4 if is_ours else 3)
+	ax.scatter(xs, medians, color=color, s=scatter_size, label=label, zorder=5 if is_ours else 4, edgecolor="white", linewidth=0.6)
 
 	ax.set_xlabel(x_label)
-	ax.set_ylabel("Snapshot time (ms)")
-	ax.grid(True, axis="y", linestyle=":", alpha=0.45)
+	ax.set_ylabel("Snapshot latency (ms)")
+	_style_axis(ax)
+
+
+def _style_axis(ax: plt.Axes):
+	ax.grid(True, axis="y", linestyle=":", linewidth=0.8, alpha=0.45)
+	ax.grid(False, axis="x")
+	for spine in ax.spines.values():
+		spine.set_visible(True)
+		spine.set_color("0.25")
+		spine.set_linewidth(0.8)
+	ax.tick_params(axis="both", which="major", length=4, width=0.8, color="0.25")
+	ax.set_axisbelow(True)
 
 
 def _plot_reference_lines(
@@ -307,7 +337,7 @@ def _plot_reference_lines(
 	series: Dict[str, List[Tuple[float, float]]],
 	base_color_cycle: List[str] = None,
 	linestyle: str = "--",
-	alpha: float = 0.7,
+	alpha: float = 0.58,
 ):
 	if not series:
 		return
@@ -332,7 +362,7 @@ def _plot_reference_lines(
 				color = next(colors)
 			except StopIteration:
 				color = None
-		ax.plot(xs, ys, linestyle=linestyle, linewidth=1.5, alpha=alpha, color=color, label=name)
+		ax.plot(xs, ys, linestyle=linestyle, linewidth=1.25, alpha=alpha, color=color, label=name, zorder=1)
 
 
 def _append_distribution_rows(
@@ -428,6 +458,9 @@ def main():
 		labels = list(args.labels)
 	else:
 		labels = [os.path.splitext(os.path.basename(p))[0] for p in csv_list]
+	plot_labels = list(labels)
+	if plot_labels:
+		plot_labels[0] = f"{plot_labels[0]}" if args.labels else "Checkpoint-lite (ours)"
 
 	# Prepare output directory
 	if args.outdir is None:
@@ -515,10 +548,10 @@ def main():
 	memfs_colors = ["tab:cyan", "tab:olive", "tab:gray", "tab:brown", "tab:pink", "tab:blue", "tab:red", "tab:purple"]
 
 	def _dataset_color(idx: int, cycle: List[str]) -> str:
-		return "tab:green" if idx == 0 else cycle[(idx - 1) % len(cycle)]
+		return OURS_COLOR if idx == 0 else cycle[(idx - 1) % len(cycle)]
 	export_rows: List[Dict[str, object]] = []
 
-	for i, (csv_path, ds_label) in enumerate(zip(csv_list, labels)):
+	for i, (csv_path, ds_label, plot_label) in enumerate(zip(csv_list, labels, plot_labels)):
 		rows = _parse_rows(csv_path)
 		if not rows:
 			print(f"Warning: no rows parsed from {csv_path}")
@@ -532,16 +565,17 @@ def main():
 			print(f"[{ds_label}] no mem-only dataset (fs_init_mb=0, fs_delta_mb=0)")
 		else:
 			if ax1 is None:
-				fig1, ax1 = plt.subplots(figsize=(9, 5.2))
-				ax1.set_title("Snapshot time vs memory (mem-only)")
+				fig1, ax1 = plt.subplots(figsize=(7.2, 4.2))
+				ax1.set_title("Snapshot latency as application memory grows")
 			color = _dataset_color(i, mem_colors)
 			_plot_distribution_with_median(
 				ax1,
 				mem_xs,
 				mem_stats,
 				color=color,
-				label=ds_label,
-				x_label="VmRSS (MB, averaged across repeats)",
+				label=plot_label,
+				x_label="Resident memory, VmRSS (MB)",
+				is_ours=(i == 0),
 			)
 			_append_distribution_rows(export_rows, "snapshot", "mem_only", ds_label, csv_path, mem_xs, mem_stats, mem_from_x=True, fs_from_x=False)
 			_apply_major_limits(ax1)
@@ -550,16 +584,17 @@ def main():
 			print(f"[{ds_label}] no fsInit-only dataset (mem_mb=0, fs_delta_mb=0, fs_init_mb>0)")
 		else:
 			if ax2 is None:
-				fig2, ax2 = plt.subplots(figsize=(9, 5.2))
-				ax2.set_title("Snapshot time vs initial filesystem size (fsInit-only)")
+				fig2, ax2 = plt.subplots(figsize=(7.2, 4.2))
+				ax2.set_title("Snapshot latency as initial filesystem size grows")
 			color = _dataset_color(i, fsinit_colors)
 			_plot_distribution_with_median(
 				ax2,
 				fs_xs,
 				fs_stats,
 				color=color,
-				label=ds_label,
-				x_label="fs_init_mb (MB)",
+				label=plot_label,
+				x_label="Initial filesystem size (MB)",
+				is_ours=(i == 0),
 			)
 			_append_distribution_rows(export_rows, "snapshot", "fsinit_only", ds_label, csv_path, fs_xs, fs_stats, mem_from_x=False, fs_from_x=True)
 			_apply_major_limits(ax2)
@@ -569,16 +604,17 @@ def main():
 			pass
 		else:
 			if ax4 is None:
-				fig4, ax4 = plt.subplots(figsize=(9, 5.2))
-				ax4.set_title("Snapshot time vs size when memory equals filesystem (mem_fs)")
+				fig4, ax4 = plt.subplots(figsize=(7.2, 4.2))
+				ax4.set_title("Snapshot latency when memory and filesystem grow together")
 			color = _dataset_color(i, memfs_colors)
 			_plot_distribution_with_median(
 				ax4,
 				memfs_xs,
 				memfs_stats,
 				color=color,
-				label=ds_label,
-				x_label="Size (MB) where mem_mb == fs_init_mb and fs_delta_mb == 0",
+				label=plot_label,
+				x_label="Memory and filesystem size (MB)",
+				is_ours=(i == 0),
 			)
 			_append_distribution_rows(export_rows, "snapshot", "mem_fs", ds_label, csv_path, memfs_xs, memfs_stats, mem_from_x=True, fs_from_x=True)
 			_apply_major_limits(ax4)
@@ -587,23 +623,23 @@ def main():
 	if ax1 is not None:
 		_plot_reference_lines(ax1, REF_DATA.get("mem_only", {}))
 		_append_reference_rows(export_rows, "snapshot", "mem_only", REF_DATA.get("mem_only", {}))
-		ax1.legend(loc="best")
+		ax1.legend(loc="best", frameon=False)
 		mem_out = os.path.join(outdir, "micro_mem_only.png")
-		fig1.tight_layout(); fig1.savefig(mem_out, dpi=160); print(f"Saved: {mem_out}")
+		fig1.tight_layout(); fig1.savefig(mem_out, dpi=300, bbox_inches="tight"); print(f"Saved: {mem_out}")
 
 	if ax2 is not None:
 		_plot_reference_lines(ax2, REF_DATA.get("fsinit_only", {}))
 		_append_reference_rows(export_rows, "snapshot", "fsinit_only", REF_DATA.get("fsinit_only", {}))
-		ax2.legend(loc="best")
+		ax2.legend(loc="best", frameon=False)
 		fs_out = os.path.join(outdir, "micro_fsinit_only.png")
-		fig2.tight_layout(); fig2.savefig(fs_out, dpi=160); print(f"Saved: {fs_out}")
+		fig2.tight_layout(); fig2.savefig(fs_out, dpi=300, bbox_inches="tight"); print(f"Saved: {fs_out}")
 
 	if ax4 is not None:
 		_plot_reference_lines(ax4, REF_DATA.get("mem_fs", {}))
 		_append_reference_rows(export_rows, "snapshot", "mem_fs", REF_DATA.get("mem_fs", {}))
-		ax4.legend(loc="best")
+		ax4.legend(loc="best", frameon=False)
 		memfs_out = os.path.join(outdir, "micro_mem_fs.png")
-		fig4.tight_layout(); fig4.savefig(memfs_out, dpi=160); print(f"Saved: {memfs_out}")
+		fig4.tight_layout(); fig4.savefig(memfs_out, dpi=300, bbox_inches="tight"); print(f"Saved: {memfs_out}")
 
 	if export_csv is not None:
 		_write_export_csv(export_csv, export_rows)
