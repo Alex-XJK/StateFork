@@ -87,6 +87,20 @@ class HybridAttachManager(EnvironmentManager):
                        "etc/resolv.conf", "etc/mtab", "dev/")
 
     @classmethod
+    def _is_zstd_archive(cls, export_path: str) -> bool:
+        """Best-effort check whether export_path is zstd-compressed tar."""
+        lower = export_path.lower()
+        if lower.endswith((".zst", ".zstd", ".tzst", ".tar.zst", ".tar.zstd")):
+            return True
+        try:
+            with open(export_path, "rb") as f:
+                magic = f.read(4)
+            # zstd frame magic: 0x28B52FFD
+            return magic == b"\x28\xb5\x2f\xfd"
+        except Exception:
+            return False
+
+    @classmethod
     def _fix_rootfs_diff_in_export(cls, export_path: str, upper_dir: str) -> None:
         """Replace rootfs-diff.tar inside the checkpoint export with a
         correct tar built from the container's overlay upper directory.
@@ -96,8 +110,18 @@ class HybridAttachManager(EnvironmentManager):
         """
         work = tempfile.mkdtemp(prefix="statefork_fix_rootfs_")
         try:
-            subprocess.run(["tar", "-I", "zstd", "-xf", export_path, "-C", work],
-                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            is_zstd = cls._is_zstd_archive(export_path)
+            extract_cmd = (
+                ["tar", "-I", "zstd", "-xf", export_path, "-C", work]
+                if is_zstd
+                else ["tar", "-xf", export_path, "-C", work]
+            )
+            subprocess.run(
+                extract_cmd,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
             new_rootfs = os.path.join(work, "rootfs-diff.tar")
             with tarfile.open(new_rootfs, "w") as tf:
@@ -116,11 +140,22 @@ class HybridAttachManager(EnvironmentManager):
                         dst.addfile(member)
             os.replace(cleaned, new_rootfs)
 
-            uncompressed = export_path + ".tmp.tar"
-            subprocess.run(["tar", "-cf", uncompressed, "-C", work, "."],
-                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["zstd", "-f", "--rm", "-q", uncompressed, "-o", export_path],
-                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            repacked_tar = export_path + ".tmp.tar"
+            subprocess.run(
+                ["tar", "-cf", repacked_tar, "-C", work, "."],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if is_zstd:
+                subprocess.run(
+                    ["zstd", "-f", "--rm", "-q", repacked_tar, "-o", export_path],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                os.replace(repacked_tar, export_path)
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
@@ -129,7 +164,8 @@ class HybridAttachManager(EnvironmentManager):
     # ------------------------------------------------------------------ #
     def _core_snapshot(self) -> tuple[Optional[str], float]:
         sid = str(uuid.uuid4())[:8]
-        export_path = os.path.join(self.export_dir, f"{sid}.tar.zstd")
+        export_path = os.path.join(self.export_dir, f"{sid}.tar")
+        # export_path = os.path.join(self.export_dir, f"{sid}.tar.zstd")
 
         # Debug: show container filesystem state immediately before checkpoint
         try:
@@ -148,6 +184,7 @@ class HybridAttachManager(EnvironmentManager):
                 self.container_name,
                 "--leave-running",
                 "-e", export_path,
+                "-c=none"
             ],
             stdout=subprocess.DEVNULL,
             check=True,
@@ -170,8 +207,13 @@ class HybridAttachManager(EnvironmentManager):
         # Debug: verify the patched export
         try:
             export_size = os.path.getsize(export_path) if os.path.exists(export_path) else -1
+            list_cmd = (
+                ["tar", "-I", "zstd", "-tf", export_path]
+                if self._is_zstd_archive(export_path)
+                else ["tar", "-tf", export_path]
+            )
             tar_list = subprocess.run(
-                ["tar", "-I", "zstd", "-tf", export_path],
+                list_cmd,
                 capture_output=True, text=True, check=False, timeout=10,
             )
             tar_entries = (tar_list.stdout or "").strip().splitlines()
