@@ -4,7 +4,16 @@ from .criu_env_manager import CRIUAttachManager, CRIUBuildManager
 from .hybrid_env_manager import HybridAttachManager, HybridBuildManager
 from .waypoint_env_manager import WaypointAttachManager, WaypointBuildManager
 from .gvisor_env_manager import GvisorBuildManager, GvisorAttachManager
-from .firecracker_env_manager import FireBuildManager, FireAttachManager
+# Firecracker pulls in optional third-party dependencies (e.g. paramiko) that are
+# not part of the base install. Import it lazily so that a missing dependency only
+# disables the Firecracker backend instead of breaking the whole controller package.
+try:
+    from .firecracker_env_manager import FireBuildManager, FireAttachManager
+except ImportError as exc:
+    FireBuildManager = FireAttachManager = None
+    _FIRECRACKER_IMPORT_ERROR = exc
+else:
+    _FIRECRACKER_IMPORT_ERROR = None
 from .benchmark import BenchmarkStats, BenchmarkResult, Statistics
 from decider.decider import Decider, RandomDecider, AlwaysFalseDecider, AlwaysTrueDecider
 
@@ -25,6 +34,16 @@ EnvType = Literal[
 """
 Apply the Factory Method pattern to create different environment managers based on the method type.
 """
+def _require_firecracker() -> None:
+    """Raise a helpful error if the optional Firecracker dependencies are missing."""
+    if FireBuildManager is None:
+        raise ImportError(
+            "The Firecracker backend requires optional dependencies that are not "
+            "installed (e.g. 'paramiko'). Install them with `pip install paramiko` "
+            "to use firecracker_build / firecracker_attach."
+        ) from _FIRECRACKER_IMPORT_ERROR
+
+
 def create_env_manager(method: EnvType, **kwargs) -> EnvironmentManager:
     if method == "criu_build":
         return CRIUBuildManager(
@@ -111,12 +130,14 @@ def create_env_manager(method: EnvType, **kwargs) -> EnvironmentManager:
             decider=kwargs.get("decider")
         )
     elif method == "firecracker_build":
+        _require_firecracker()
         return FireBuildManager(
             fire_parent_dir=kwargs.get("firecracker_dir", "/tmp"), # create artifact and ckpt directories here
             inject_dir=kwargs.get("inject_dir", "app"), # pass files to be in the vm
             decider=kwargs.get("decider")
         )
     elif method == "firecracker_attach":
+        _require_firecracker()
         fire_pid = int(kwargs["pid"])
         return FireAttachManager(
             fire_process = psutil.Process(fire_pid),
