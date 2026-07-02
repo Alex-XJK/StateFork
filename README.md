@@ -52,10 +52,10 @@ They follow the naming convention `{Backend}{Action}Manager`, where:
   - `CRIU` for process-level CRIU checkpointing
   - `Hybrid` for Podman + CRIU (captures both file and process states) 
   - `Waypoint` for Waypoint, a lightweight checkpointing tool (captures both file and process states)
-  - `gVisor` for Docker in gVisor (captures both file and process states)
-  - `Firecracker` for Firecracker microVM (captures process states)
+  - `Gvisor` for Docker in gVisor (captures both file and process states)
+  - `Fire` for Firecracker microVM (captures process states)
 - **{Action}** Lifecycle mode:
-  - `Build` starts a fresh instance (for testing/dev)
+  - `Build` starts a fresh instance (usually from a Dockerfile or base image)
   - `Attach` connects to an existing container or process
 
 ### 🏭 Factory Method Support
@@ -174,7 +174,6 @@ Check the Waypoint [user guide](https://github.com/Alex-XJK/waypoint#0-optional-
 The result is a catch-22 in network functionality: checkpoint/restore requires `--network=host` passed to Docker, but full network passthrough requires `--network=host` passed to runsc, breaking checkpoint/restore.
 
 ### Firecracker Method
-- paramiko must be installed (not currently in requirements.txt)
 - Root or `sudo` privileges are required.
 
 ---

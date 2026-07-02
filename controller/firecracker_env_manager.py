@@ -9,7 +9,6 @@ from .base_env_manager import EnvironmentManager, SnapshotNode
 from decider import Decider
 from pathlib import Path
 import json
-import paramiko # need to pip install
 import ipaddress
 from .benchmark import FileSizeCalculator
 
@@ -61,6 +60,7 @@ class FireAttachManager(EnvironmentManager):
         self._stats.attach_size_calculator(fsc)
 
         # Open ssh
+        import paramiko
         self.param_key = paramiko.RSAKey.from_private_key_file(key)
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
