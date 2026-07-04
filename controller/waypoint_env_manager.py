@@ -45,8 +45,12 @@ def _run_waypoint(args: list[str], **kwargs):
             "put it on PATH, set the WAYPOINT_BIN environment variable, or "
             f"symlink it into {STATEFORK_ROOT}."
         )
+    # Waypoint needs root (buildah overlay mount, CRIU, overlay/chroot). Callers
+    # (e.g. Harbor) request privilege escalation via WAYPOINT_CMD_PREFIX, e.g.
+    # "sudo -n -E". Empty/unset => run the binary directly (unchanged behavior).
+    prefix = shlex.split(os.environ.get("WAYPOINT_CMD_PREFIX", ""))
     return subprocess.run(
-        [WAYPOINT_BIN, *args],
+        [*prefix, WAYPOINT_BIN, *args],
         cwd=STATEFORK_ROOT,
         **kwargs,
     )
