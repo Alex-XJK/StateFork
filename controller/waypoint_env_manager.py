@@ -254,11 +254,17 @@ class WaypointAttachManager(EnvironmentManager):
 
 class WaypointBuildManager(WaypointAttachManager):
     """
-    WaypointBuildManager is a specialized Waypoint EnvironmentManager that builds a new session.
+    WaypointBuildManager is a specialized Waypoint EnvironmentManager that
+    builds a new **build-mode** session from a Dockerfile.
+
+    Build mode is the only supported mode. ``waypoint init`` sessions were
+    dropped deliberately: they have no managed shell, so ``exec`` degrades to
+    a raw ``execve`` (no ``;``/``&&``/cwd/env shell semantics) and there is no
+    shell session for CRIU to checkpoint — this manager's exec and snapshot
+    contracts would silently not hold.
     """
     def __init__(self,
                  dockerfile_dir: str = ".",
-                 build: bool = True,
                  decider: Optional[Decider] = None,
                  ):
         if dockerfile_dir is None:
@@ -267,34 +273,19 @@ class WaypointBuildManager(WaypointAttachManager):
             target_dir = os.path.abspath(dockerfile_dir)
 
         logger.info("Creating a new Waypoint session...")
-        if not build:
-            init_process = _run_waypoint(
-                ["init", target_dir, "--quiet"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
+        build_process = _run_waypoint(
+            ["build", target_dir, "--quiet"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
 
-            output = init_process.stdout.strip()
-            try:
-                sid, self._work_dir = output.split(",", 1)
-            except ValueError:
-                raise RuntimeError(f"Unexpected output format: {output}")
-        else:
-            init_process = _run_waypoint(
-                ["build", target_dir, "--quiet"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
-
-            output = init_process.stdout.strip()
-            try:
-                sid, self._work_dir, _ = output.split(",", 2)
-            except ValueError:
-                raise RuntimeError(f"Unexpected output format: {output}")
+        output = build_process.stdout.strip()
+        try:
+            sid, self._work_dir, _ = output.split(",", 2)
+        except ValueError:
+            raise RuntimeError(f"Unexpected output format: {output}")
 
         logger.info(f"New session {sid} with work directory '{self._work_dir}' created.")
 

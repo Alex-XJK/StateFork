@@ -85,9 +85,14 @@ def create_env_manager(method: EnvType, **kwargs) -> EnvironmentManager:
             decider=kwargs.get("decider")
         )
     elif method in ("waypoint_build", "ckpt_build"):
+        if kwargs.get("build") is False:
+            raise ValueError(
+                "Waypoint init (non-build) sessions are not supported: they "
+                "have no managed shell, so exec/CRIU semantics do not hold. "
+                "Provide a Dockerfile and use build mode."
+            )
         return WaypointBuildManager(
             dockerfile_dir=kwargs.get("dockerfile_dir"),
-            build=kwargs.get("build", True),
             decider=kwargs.get("decider")
         )
     elif method in ("waypoint_attach", "ckpt_attach"):

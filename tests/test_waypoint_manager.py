@@ -81,12 +81,20 @@ def test_build_parses_output_and_seeds_root(runner, mgr):
     assert mgr.current_snapshot_id is not None
 
 
-def test_init_mode_parses_two_field_output(runner):
-    runner.responses["init"] = (0, "sid9,/tmp/wp/sid9/work\n", "")
-    m = WaypointBuildManager(dockerfile_dir="/ctx", build=False)
-    assert runner.calls[0][0] == "init"
-    assert m.session_id == "sid9"
-    assert m.work_dir == "/tmp/wp/sid9/work"
+def test_non_build_mode_removed(runner):
+    """Init (non-build) sessions are gone: no managed shell => no exec/CRIU
+    semantics. The ``build`` kwarg no longer exists on the constructor."""
+    with pytest.raises(TypeError):
+        WaypointBuildManager(dockerfile_dir="/ctx", build=False)
+    with pytest.raises(TypeError):
+        WaypointBuildManager(dockerfile_dir="/ctx", build=True)
+
+
+def test_factory_rejects_build_false(runner):
+    from controller import create_env_manager
+
+    with pytest.raises(ValueError, match="not supported"):
+        create_env_manager("ckpt_build", dockerfile_dir="/ctx", build=False)
 
 
 # --------------------------------------------------------------------------- #
