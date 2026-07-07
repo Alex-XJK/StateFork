@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -13,6 +14,15 @@ from .benchmark import Calculator
 from decider import Decider
 
 logger = logging.getLogger("EnvManager.Waypoint")
+
+# `waypoint exec` prints the shell's output but always exits 0 — the inner
+# command's real status is discarded by its PTY-RPC shell. Recovering it is
+# THIS layer's job (consumers such as Harbor rely on exec_command's rc for
+# install checks, verifier rewards, `&&` chains): every exec is wrapped in a
+# subshell (so a bare `exit N` cannot skip the marker) followed by a printf of
+# `$?`, which is parsed back out of stdout and stripped.
+_RC_MARKER = "__SF_WP_RC__"
+_RC_RE = re.compile(rf"{_RC_MARKER}=(-?\d+)")
 
 STATEFORK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -194,25 +204,53 @@ class WaypointAttachManager(EnvironmentManager):
         else:
             cmd_str = shlex.join(command)
 
-        # Execute `command` via `waypoint exec <session_id> <args...>`.
+        # Wrap in a subshell + exit-code marker so the command's real status
+        # survives waypoint's PTY-RPC shell (which always reports rc 0).
+        wrapped = f'( {cmd_str} ); printf "\\n{_RC_MARKER}=%d\\n" "$?"'
+
+        # Execute via `waypoint exec <session_id> <wrapped>`.
         try:
             proc = _run_waypoint(
-                ["exec", self.session_id, cmd_str],
+                ["exec", self.session_id, wrapped],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=timeout,
                 check=False,
             )
-            return proc.returncode, proc.stdout, proc.stderr
+            rc, stdout = self._extract_rc(proc.stdout or "", fallback=proc.returncode)
+            return rc, stdout, proc.stderr
         except subprocess.TimeoutExpired as e:
             out = e.stdout or ""
-            err = (e.stderr or "") + f"\n[timeout after {timeout}s]"
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", "replace")
+            err = (e.stderr or "")
+            if isinstance(err, bytes):
+                err = err.decode("utf-8", "replace")
+            err += f"\n[timeout after {timeout}s]"
             logger.error(f"Waypoint exec timeout: {e}")
             return -1, out, err
         except Exception as e:
             logger.error(f"Waypoint exec failed: {e}")
             return -1, "", str(e)
+
+    @staticmethod
+    def _extract_rc(out: str, fallback: int) -> tuple[int, str]:
+        """Pull the trailing `_RC_MARKER=<n>` out of stdout.
+
+        Returns (rc, stdout-with-the-marker-stripped). Falls back to *fallback*
+        (the waypoint process's own rc, e.g. -1 after a timeout kill) when the
+        marker is absent — e.g. the session shell died before printing it.
+        """
+        matches = list(_RC_RE.finditer(out))
+        if not matches:
+            return fallback, out
+        last = matches[-1]
+        rc = int(last.group(1))
+        clean = out[: last.start()]
+        if clean.endswith("\n"):
+            clean = clean[:-1]
+        return rc, clean
 
 class WaypointBuildManager(WaypointAttachManager):
     """
