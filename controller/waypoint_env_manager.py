@@ -121,19 +121,23 @@ class WaypointAttachManager(EnvironmentManager):
     PID_NOT_PROVIDED = -2
 
     # A checkpoint/restore freezes the session shell and revives it on a fresh
-    # overlay; bash_init then needs a moment to re-listen on the session
-    # socket. An exec landing in that window fails inside waypoint itself with
-    # "dial unix .../shell_<sid>.sock: connect: connection refused"
-    # (waypoint rc != 0, no marker in stdout — the command never reached the
-    # shell), so retrying is always safe. Without the retry, the FIRST exec
-    # after every snapshot()/restore() fails most of the time on a fast host.
+    # overlay; bash_init then needs a moment to recreate + re-listen on the
+    # session socket. An exec landing in that window fails inside waypoint
+    # itself with "dial unix .../shell_<sid>.sock: connect: connection
+    # refused" (socket exists, nobody listening) or "connect: no such file or
+    # directory" (socket not recreated yet). Both mean the command never
+    # reached the shell (waypoint rc != 0, no marker in stdout), so retrying
+    # is always safe. Without the retry, the FIRST exec after every
+    # snapshot()/restore() fails most of the time on a fast host.
     SHELL_RETRY_TIMEOUT_SEC = 10.0
     SHELL_RETRY_INTERVAL_SEC = 0.4
 
     @staticmethod
     def _shell_unready(out: str, err: str) -> bool:
         blob = f"{out}\n{err}"
-        return "dial unix" in blob and "connection refused" in blob
+        if "dial unix" not in blob:
+            return False
+        return "connection refused" in blob or "no such file or directory" in blob
 
     def __init__(self,
                  session_id: str,

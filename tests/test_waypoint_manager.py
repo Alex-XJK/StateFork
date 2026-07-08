@@ -132,16 +132,22 @@ _DIAL_REFUSED = (
     "Error executing command: failed to execute command: dial unix "
     "/tmp/wp/sid1234/temp/shell_sid1234.sock: connect: connection refused"
 )
+# Second unready flavor: the socket file itself is not recreated yet.
+_DIAL_ENOENT = _DIAL_REFUSED.replace(
+    "connection refused", "no such file or directory"
+)
 
 
-def test_exec_retries_while_shell_socket_unready(runner, mgr):
+@pytest.mark.parametrize("dial_error", [_DIAL_REFUSED, _DIAL_ENOENT])
+def test_exec_retries_while_shell_socket_unready(runner, mgr, dial_error):
     """The first exec after a checkpoint/restore can land before bash_init
-    re-listens on the session socket; waypoint then fails with a dial error
-    and the command never reached the shell — the manager must retry."""
+    recreates/re-listens on the session socket; waypoint then fails with a
+    dial error and the command never reached the shell — the manager must
+    retry (both the refused and the not-yet-created socket flavors)."""
     mgr.SHELL_RETRY_INTERVAL_SEC = 0.0
     runner.responses["exec"] = [
-        (1, _DIAL_REFUSED, ""),
-        (1, _DIAL_REFUSED, ""),
+        (1, dial_error, ""),
+        (1, dial_error, ""),
         (0, f"ok\n{_RC_MARKER}=0\n", ""),
     ]
     n_before = sum(1 for c in runner.calls if c[0] == "exec")
