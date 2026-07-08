@@ -120,6 +120,21 @@ class WaypointAttachManager(EnvironmentManager):
     """
     PID_NOT_PROVIDED = -2
 
+    # A checkpoint/restore freezes the session shell and revives it on a fresh
+    # overlay; bash_init then needs a moment to re-listen on the session
+    # socket. An exec landing in that window fails inside waypoint itself with
+    # "dial unix .../shell_<sid>.sock: connect: connection refused"
+    # (waypoint rc != 0, no marker in stdout — the command never reached the
+    # shell), so retrying is always safe. Without the retry, the FIRST exec
+    # after every snapshot()/restore() fails most of the time on a fast host.
+    SHELL_RETRY_TIMEOUT_SEC = 10.0
+    SHELL_RETRY_INTERVAL_SEC = 0.4
+
+    @staticmethod
+    def _shell_unready(out: str, err: str) -> bool:
+        blob = f"{out}\n{err}"
+        return "dial unix" in blob and "connection refused" in blob
+
     def __init__(self,
                  session_id: str,
                  target_pid: int = PID_NOT_PROVIDED,
@@ -208,17 +223,37 @@ class WaypointAttachManager(EnvironmentManager):
         # survives waypoint's PTY-RPC shell (which always reports rc 0).
         wrapped = f'( {cmd_str} ); printf "\\n{_RC_MARKER}=%d\\n" "$?"'
 
-        # Execute via `waypoint exec <session_id> <wrapped>`.
+        # Execute via `waypoint exec <session_id> <wrapped>`, retrying while
+        # the just-restored session shell is not yet accepting connections.
         try:
-            proc = _run_waypoint(
-                ["exec", self.session_id, wrapped],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-            rc, stdout = self._extract_rc(proc.stdout or "", fallback=proc.returncode)
+            deadline = time.monotonic() + self.SHELL_RETRY_TIMEOUT_SEC
+            attempts = 0
+            while True:
+                attempts += 1
+                proc = _run_waypoint(
+                    ["exec", self.session_id, wrapped],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                out = proc.stdout or ""
+                if (
+                    proc.returncode != 0
+                    and not _RC_RE.search(out)
+                    and self._shell_unready(out, proc.stderr or "")
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(self.SHELL_RETRY_INTERVAL_SEC)
+                    continue
+                break
+            if attempts > 1:
+                logger.warning(
+                    f"Session shell was unready after a checkpoint/restore; "
+                    f"retried exec {attempts - 1} time(s)."
+                )
+            rc, stdout = self._extract_rc(out, fallback=proc.returncode)
             return rc, stdout, proc.stderr
         except subprocess.TimeoutExpired as e:
             out = e.stdout or ""

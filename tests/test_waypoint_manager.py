@@ -40,6 +40,8 @@ class FakeRunner:
     def __call__(self, args, **kwargs):
         self.calls.append(list(args))
         resp = self.responses.get(args[0], (0, "", ""))
+        if isinstance(resp, list):  # sequenced responses; last one sticks
+            resp = resp.pop(0) if len(resp) > 1 else resp[0]
         if isinstance(resp, Exception):
             raise resp
         rc, out, err = resp
@@ -124,6 +126,40 @@ def test_exec_list_command_is_shell_joined(runner, mgr):
     runner.responses["exec"] = (0, f"{_RC_MARKER}=0\n", "")
     mgr.exec_command(["echo", "a b"])
     assert "( echo 'a b' );" in runner.calls[-1][2]
+
+
+_DIAL_REFUSED = (
+    "Error executing command: failed to execute command: dial unix "
+    "/tmp/wp/sid1234/temp/shell_sid1234.sock: connect: connection refused"
+)
+
+
+def test_exec_retries_while_shell_socket_unready(runner, mgr):
+    """The first exec after a checkpoint/restore can land before bash_init
+    re-listens on the session socket; waypoint then fails with a dial error
+    and the command never reached the shell — the manager must retry."""
+    mgr.SHELL_RETRY_INTERVAL_SEC = 0.0
+    runner.responses["exec"] = [
+        (1, _DIAL_REFUSED, ""),
+        (1, _DIAL_REFUSED, ""),
+        (0, f"ok\n{_RC_MARKER}=0\n", ""),
+    ]
+    n_before = sum(1 for c in runner.calls if c[0] == "exec")
+    rc, out, _ = mgr.exec_command("echo ok")
+    assert rc == 0
+    assert out == "ok"
+    assert sum(1 for c in runner.calls if c[0] == "exec") - n_before == 3
+
+
+def test_exec_gives_up_when_shell_stays_down(runner, mgr):
+    mgr.SHELL_RETRY_TIMEOUT_SEC = 0.2
+    mgr.SHELL_RETRY_INTERVAL_SEC = 0.02
+    runner.responses["exec"] = (1, _DIAL_REFUSED, "")
+    n_before = sum(1 for c in runner.calls if c[0] == "exec")
+    rc, out, _ = mgr.exec_command("echo ok")
+    assert rc == 1  # falls back to waypoint's own rc once the budget is spent
+    assert "connection refused" in out
+    assert sum(1 for c in runner.calls if c[0] == "exec") - n_before > 1
 
 
 def test_exec_timeout_returns_minus_one(runner, mgr):
