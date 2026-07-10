@@ -3,10 +3,9 @@
 The waypoint binary / CRIU cannot run here, so the module-level
 ``_run_waypoint`` seam is replaced with a fake (this also bypasses the
 WAYPOINT_BIN existence check). The contract under test is the one consumers
-(e.g. Harbor's WaypointEnvironment) rely on — most importantly that
-``exec_command`` returns the command's **real exit code**: waypoint's PTY-RPC
-shell always exits 0, so the manager wraps every exec in a subshell + printf
-marker and parses the code back out of stdout.
+(e.g. Harbor's WaypointEnvironment) rely on: the command is forwarded verbatim
+(exit-code recovery is the caller's job), and the manager retries while a
+just-restored session shell is not yet listening.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from controller import waypoint_env_manager as wpm
-from controller.waypoint_env_manager import WaypointBuildManager, _RC_MARKER
+from controller.waypoint_env_manager import WaypointBuildManager
 
 
 BUILD_OUT = "sid1234,/tmp/waypoint-sessions/sid1234/work,4242\n"
@@ -34,7 +33,7 @@ class FakeRunner:
             "create": (0, "Checkpoint created\n", ""),
             "restore": (0, "restored\n", ""),
             "cleanup": (0, "", ""),
-            "exec": (0, f"{_RC_MARKER}=0\n", ""),
+            "exec": (0, "", ""),
         }
 
     def __call__(self, args, **kwargs):
@@ -100,32 +99,21 @@ def test_factory_rejects_build_false(runner):
 
 
 # --------------------------------------------------------------------------- #
-# exec — the real-exit-code contract (the reason this layer exists)
+# exec — verbatim forwarding (no exit-code recovery in this layer)
 # --------------------------------------------------------------------------- #
-def test_exec_recovers_real_exit_code_and_strips_marker(runner, mgr):
-    runner.responses["exec"] = (0, f"boom\n{_RC_MARKER}=7\n", "")
+def test_exec_forwards_command_and_output_verbatim(runner, mgr):
+    runner.responses["exec"] = (5, "plain output", "err")
     rc, out, err = mgr.exec_command("false-ish")
-    assert rc == 7
-    assert out == "boom"  # marker line + its leading newline stripped
-
+    # rc/stdout/stderr are passed straight through — no wrap, no marker parse.
+    assert (rc, out, err) == (5, "plain output", "err")
     argv = runner.calls[-1]
     assert argv[:2] == ["exec", "sid1234"]
-    wrapped = argv[2]
-    assert wrapped.startswith("( false-ish );")  # subshell: bare `exit` safe
-    assert _RC_MARKER in wrapped
-
-
-def test_exec_marker_absent_falls_back_to_process_rc(runner, mgr):
-    runner.responses["exec"] = (5, "plain output", "")
-    rc, out, _ = mgr.exec_command("weird")
-    assert rc == 5
-    assert out == "plain output"
+    assert argv[2] == "false-ish"  # sent as-is, not wrapped in a subshell
 
 
 def test_exec_list_command_is_shell_joined(runner, mgr):
-    runner.responses["exec"] = (0, f"{_RC_MARKER}=0\n", "")
     mgr.exec_command(["echo", "a b"])
-    assert "( echo 'a b' );" in runner.calls[-1][2]
+    assert runner.calls[-1][2] == "echo 'a b'"
 
 
 _DIAL_REFUSED = (
@@ -148,12 +136,12 @@ def test_exec_retries_while_shell_socket_unready(runner, mgr, dial_error):
     runner.responses["exec"] = [
         (1, dial_error, ""),
         (1, dial_error, ""),
-        (0, f"ok\n{_RC_MARKER}=0\n", ""),
+        (0, "ok\n", ""),
     ]
     n_before = sum(1 for c in runner.calls if c[0] == "exec")
     rc, out, _ = mgr.exec_command("echo ok")
     assert rc == 0
-    assert out == "ok"
+    assert out == "ok\n"  # forwarded verbatim (no marker strip)
     assert sum(1 for c in runner.calls if c[0] == "exec") - n_before == 3
 
 

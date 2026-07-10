@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -16,13 +15,10 @@ from decider import Decider
 logger = logging.getLogger("EnvManager.Waypoint")
 
 # `waypoint exec` prints the shell's output but always exits 0 — the inner
-# command's real status is discarded by its PTY-RPC shell. Recovering it is
-# THIS layer's job (consumers such as Harbor rely on exec_command's rc for
-# install checks, verifier rewards, `&&` chains): every exec is wrapped in a
-# subshell (so a bare `exit N` cannot skip the marker) followed by a printf of
-# `$?`, which is parsed back out of stdout and stripped.
-_RC_MARKER = "__SF_WP_RC__"
-_RC_RE = re.compile(rf"{_RC_MARKER}=(-?\d+)")
+# command's real status is discarded by its PTY-RPC shell. This layer does NOT
+# recover it: turning waypoint's always-0 into the command's real exit code is
+# left to the caller (Harbor does it optionally, via its own marker). Keeping
+# it out of here keeps the manager a thin, near-upstream wrapper.
 
 STATEFORK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -125,10 +121,10 @@ class WaypointAttachManager(EnvironmentManager):
     # session socket. An exec landing in that window fails inside waypoint
     # itself with "dial unix .../shell_<sid>.sock: connect: connection
     # refused" (socket exists, nobody listening) or "connect: no such file or
-    # directory" (socket not recreated yet). Both mean the command never
-    # reached the shell (waypoint rc != 0, no marker in stdout), so retrying
-    # is always safe. Without the retry, the FIRST exec after every
-    # snapshot()/restore() fails most of the time on a fast host.
+    # directory" (socket not recreated yet). That dial error is waypoint's own
+    # (the command never reached the shell), so retrying is always safe.
+    # Without the retry, the FIRST exec after every snapshot()/restore() fails
+    # most of the time on a fast host.
     SHELL_RETRY_TIMEOUT_SEC = 10.0
     SHELL_RETRY_INTERVAL_SEC = 0.4
 
@@ -223,19 +219,17 @@ class WaypointAttachManager(EnvironmentManager):
         else:
             cmd_str = shlex.join(command)
 
-        # Wrap in a subshell + exit-code marker so the command's real status
-        # survives waypoint's PTY-RPC shell (which always reports rc 0).
-        wrapped = f'( {cmd_str} ); printf "\\n{_RC_MARKER}=%d\\n" "$?"'
-
-        # Execute via `waypoint exec <session_id> <wrapped>`, retrying while
-        # the just-restored session shell is not yet accepting connections.
+        # No exit-code recovery: waypoint's exec always reports rc 0 and this
+        # layer forwards its (rc, stdout, stderr) verbatim; the caller decides
+        # whether to recover the real code. We only retry while the
+        # just-restored session shell is not yet accepting connections.
         try:
             deadline = time.monotonic() + self.SHELL_RETRY_TIMEOUT_SEC
             attempts = 0
             while True:
                 attempts += 1
                 proc = _run_waypoint(
-                    ["exec", self.session_id, wrapped],
+                    ["exec", self.session_id, cmd_str],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -245,7 +239,6 @@ class WaypointAttachManager(EnvironmentManager):
                 out = proc.stdout or ""
                 if (
                     proc.returncode != 0
-                    and not _RC_RE.search(out)
                     and self._shell_unready(out, proc.stderr or "")
                     and time.monotonic() < deadline
                 ):
@@ -257,8 +250,7 @@ class WaypointAttachManager(EnvironmentManager):
                     f"Session shell was unready after a checkpoint/restore; "
                     f"retried exec {attempts - 1} time(s)."
                 )
-            rc, stdout = self._extract_rc(out, fallback=proc.returncode)
-            return rc, stdout, proc.stderr
+            return proc.returncode, out, proc.stderr
         except subprocess.TimeoutExpired as e:
             out = e.stdout or ""
             if isinstance(out, bytes):
@@ -272,24 +264,6 @@ class WaypointAttachManager(EnvironmentManager):
         except Exception as e:
             logger.error(f"Waypoint exec failed: {e}")
             return -1, "", str(e)
-
-    @staticmethod
-    def _extract_rc(out: str, fallback: int) -> tuple[int, str]:
-        """Pull the trailing `_RC_MARKER=<n>` out of stdout.
-
-        Returns (rc, stdout-with-the-marker-stripped). Falls back to *fallback*
-        (the waypoint process's own rc, e.g. -1 after a timeout kill) when the
-        marker is absent — e.g. the session shell died before printing it.
-        """
-        matches = list(_RC_RE.finditer(out))
-        if not matches:
-            return fallback, out
-        last = matches[-1]
-        rc = int(last.group(1))
-        clean = out[: last.start()]
-        if clean.endswith("\n"):
-            clean = clean[:-1]
-        return rc, clean
 
 class WaypointBuildManager(WaypointAttachManager):
     """
