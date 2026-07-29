@@ -52,7 +52,9 @@ class EnvironmentManager(ABC):
         Cleanup resources when the EnvironmentManager is deleted.
         This is a fallback to ensure cleanup if not explicitly called.
         """
-        if not self.is_cleaned_up:
+        # getattr guards against partially-constructed instances (an __init__
+        # that raised before completing still triggers __del__).
+        if not getattr(self, "is_cleaned_up", True):
             logger.info("EnvironmentManager is being deleted, performing cleanup...")
             self.cleanup()
 

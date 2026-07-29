@@ -10,6 +10,11 @@ AVAILABLE_COMMANDS = [
     "restore <id>",
     "step",
     "cmd <command>",
+    "fork <id> [n]",
+    "forks",
+    "fexec <fork> <cmd>",
+    "snapfork <fork>",
+    "destroy <fork>",
     "tree",
     "stats",
     "history",
@@ -62,6 +67,13 @@ def print_welcome_message(manager):
     print("")
     print(f"Available commands: {', '.join(AVAILABLE_COMMANDS)}")
 
+def has_fork_api(manager) -> bool:
+    if hasattr(manager, "fork"):
+        return True
+    print(f"This command requires the Waypoint backend (current: {manager.backend}).")
+    return False
+
+
 def execute_command(manager, command_text):
     rc, out, err = manager.exec_command(command_text)
 
@@ -108,6 +120,74 @@ def interactive_shell(manager):
                 print("Usage: cmd <command>")
                 continue
             execute_command(manager, command_text)
+
+        elif cmd == "forks":
+            if not has_fork_api(manager):
+                continue
+            forks = manager.list_forks()
+            if not forks:
+                print("No live forks.")
+            for f in forks:
+                marker = " (current)" if f.id == manager.current_fork_id else ""
+                print(f"- {f.id}{marker}: pid={f.pid} base={f.base_checkpoint} status={f.status}")
+
+        elif cmd.startswith("fork"):
+            if not has_fork_api(manager):
+                continue
+            parts = cmd.split()
+            if len(parts) < 2:
+                print("Usage: fork <snapshot_id> [n]")
+                continue
+            try:
+                n = int(parts[2]) if len(parts) > 2 else 1
+            except ValueError:
+                print("Usage: fork <snapshot_id> [n]")
+                continue
+            forks = manager.fork(parts[1], n=n)
+            for f in forks:
+                print(f"Forked {f.id} (pid={f.pid}, restore={f.restore_duration})")
+            if not forks:
+                print("Fork failed.")
+
+        elif cmd.startswith("fexec"):
+            if not has_fork_api(manager):
+                continue
+            _, _, rest = cmd.partition(" ")
+            fork_id, _, command_text = rest.strip().partition(" ")
+            if not fork_id or not command_text:
+                print("Usage: fexec <fork_id> <command>")
+                continue
+            rc, out, err = manager.exec_in_fork(fork_id, command_text)
+            if out.strip():
+                print("--- stdout ---")
+                print(out.strip())
+            if err.strip():
+                print("--- stderr ---")
+                print(err.strip())
+            if rc != 0:
+                print(f"(exit code {rc})")
+
+        elif cmd.startswith("snapfork"):
+            if not has_fork_api(manager):
+                continue
+            _, _, fork_id = cmd.partition(" ")
+            fork_id = fork_id.strip()
+            if not fork_id:
+                print("Usage: snapfork <fork_id>")
+                continue
+            sid = manager.snapshot_fork(fork_id)
+            print(f"Fork {fork_id} snapshotted as {sid}" if sid else "Snapshot failed.")
+
+        elif cmd.startswith("destroy"):
+            if not has_fork_api(manager):
+                continue
+            _, _, fork_id = cmd.partition(" ")
+            fork_id = fork_id.strip()
+            if not fork_id:
+                print("Usage: destroy <fork_id>")
+                continue
+            ok = manager.destroy_fork(fork_id)
+            print(f"Fork {fork_id} destroyed." if ok else f"Failed to destroy fork {fork_id}.")
 
         elif cmd == "tree":
             print(manager.print_snapshot_tree())

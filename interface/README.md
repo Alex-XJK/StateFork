@@ -31,6 +31,11 @@ See the sample run screenshot below.
 | restore {id}	 | Roll back to a given snapshot ID                         |
 | step	         | Snapshot and restore immediately to simulate progression |
 | cmd {command} | Execute a shell command inside the managed environment   |
+| fork {id} [n] | Materialize n live forks of a snapshot (Waypoint only)   |
+| forks         | List live forks (Waypoint only)                          |
+| fexec {fork} {command} | Execute a command in a specific live fork (Waypoint only) |
+| snapfork {fork} | Seal a live fork into a new snapshot (Waypoint only)   |
+| destroy {fork} | Destroy a live fork (Waypoint only)                     |
 | tree	         | Show snapshot tree structure                             |
 | stats	        | Show benchmarking results                                |
 | history	      | Show operation history                                   |

@@ -60,6 +60,24 @@ They are:
 - `.list_snapshots()`: List all snapshots created by the controller instance.
 - `.print_snapshot_tree()`: Print a tree view of all snapshots created by the controller instance. [ Non-thread-safe ]
 
+### 🍴 Concurrent Forking (Waypoint backend only)
+
+The fork-based Waypoint backend can keep **multiple live instances of one snapshot** running at once.
+A *fork* is a running copy (own filesystem layer, own process tree, own shell); the manager always has one
+*current fork* (initially `main`) that `snapshot()` / `restore()` / `exec_command()` act on. `restore(id)`
+materializes a fresh fork of that snapshot and switches the current fork to it (the superseded restore-fork
+is destroyed automatically; `main` is always preserved).
+
+`WaypointAttachManager` / `WaypointBuildManager` additionally expose:
+
+- `.fork(snapshot_id, n=1, ids=None)`: materialize `n` live forks of a **physical** snapshot in parallel; returns a list of `WaypointFork(id, pid, socket, base_checkpoint, restore_duration, status)` handles.
+- `.exec_in_fork(fork_id, command, timeout=None)`: run a command in one fork's persistent shell. Commands on **different forks run concurrently**; commands on the same fork serialize. (Raw primitive: unlike `exec_command()`, it feeds neither the benchmark log nor virtual-snapshot replay.)
+- `.snapshot_fork(fork_id)`: seal a live fork into a new physical snapshot; the fork stays live and rebases onto it. The new snapshot joins the snapshot tree as a child of the fork's previous base.
+- `.destroy_fork(fork_id)`: kill a fork and remove its private layers (refuses the current fork).
+- `.list_forks()` / `.live_forks` / `.current_fork_id`: inspect live forks.
+
+See `scripts/waypoint_fork_demo.py` for an end-to-end tour (fork → diverge → recursive snapshot → restore).
+
 ### 🧪 Benchmark
 You can enter the benchmark interface through the `.stats` attribute of any `EnvironmentManager` subclass instance.
 
