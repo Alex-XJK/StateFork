@@ -2,6 +2,7 @@ import logging
 import os
 import statistics
 import subprocess
+import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -156,13 +157,17 @@ class BenchmarkStats:
     sequence_counter: int = 0
     log: List[BenchmarkEntry] = field(default_factory=list)
     size_calculators: List[Calculator] = field(default_factory=list)
+    # Fork-targeted exec_command calls may run from multiple threads (Waypoint
+    # backend); serialize log appends so entries and sequence numbers stay sane.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add_entry(self, operation: str, target_id: str, elapsed_time: float) -> None:
         """
-        Add a new benchmark entry to the log.
+        Add a new benchmark entry to the log. Thread-safe.
         """
-        self.sequence_counter += 1
-        self.log.append(BenchmarkEntry(self.sequence_counter, operation, target_id, elapsed_time))
+        with self._lock:
+            self.sequence_counter += 1
+            self.log.append(BenchmarkEntry(self.sequence_counter, operation, target_id, elapsed_time))
 
     def attach_size_calculator(self, cal: Calculator) -> None:
         """

@@ -63,20 +63,34 @@ They are:
 ### 🍴 Concurrent Forking (Waypoint backend only)
 
 The fork-based Waypoint backend can keep **multiple live instances of one snapshot** running at once.
-A *fork* is a running copy (own filesystem layer, own process tree, own shell); the manager always has one
-*current fork* (initially `main`) that `snapshot()` / `restore()` / `exec_command()` act on. `restore(id)`
-materializes a fresh fork of that snapshot and switches the current fork to it (the superseded restore-fork
-is destroyed automatically; `main` is always preserved).
+A *fork* is a running copy (own filesystem layer, own process tree, own shell).
 
-`WaypointAttachManager` / `WaypointBuildManager` additionally expose:
+**Single-verb design with a current branch** ("one semantic = one command = one name"): every primitive
+issues exactly one `waypoint` CLI command, and fork-targeting is an **optional argument on the generic
+verbs**, not a parallel API. The generic verbs act on the **current fork** (`.current_fork_id`, initially
+`main`), which moves only through `restore()`.
 
-- `.fork(snapshot_id, n=1, ids=None)`: materialize `n` live forks of a **physical** snapshot in parallel; returns a list of `WaypointFork(id, pid, socket, base_checkpoint, restore_duration, status)` handles.
-- `.exec_in_fork(fork_id, command, timeout=None)`: run a command in one fork's persistent shell. Commands on **different forks run concurrently**; commands on the same fork serialize. (Raw primitive: unlike `exec_command()`, it feeds neither the benchmark log nor virtual-snapshot replay.)
-- `.snapshot_fork(fork_id)`: seal a live fork into a new physical snapshot; the fork stays live and rebases onto it. The new snapshot joins the snapshot tree as a child of the fork's previous base.
-- `.destroy_fork(fork_id)`: kill a fork and remove its private layers (refuses the current fork).
-- `.list_forks()` / `.live_forks` / `.current_fork_id`: inspect live forks.
+- `.snapshot()` seals the current fork (Decider applies, linear lineage; the backend snapshot is a
+  destructive dump + re-restore, so the fork resumes under a fresh PID — the registry auto-refreshes);
+  `.snapshot(fork_id=f)` seals fork `f` — always physical, a child of `f`'s previous base in the tree.
+- `.snapshot(fork_id=f, park=True)`: **park** — seal *without resuming* (cheapest persist). The fork
+  ceases to exist; its state survives as the snapshot and revives via `fork()`. Parking the current fork
+  stashes it back to `main`; `main` itself cannot be parked.
+- `.restore(id)`: move the current branch — the one **explicit macro**: `fork` the target, switch the
+  pointer, `destroy` the departing fork. Its un-sealed state is **discarded by contract** — seal it first
+  (`snapshot()`, or `park` for a lossless retire) to keep it; `main` stays live instead. Materialization
+  happens before destruction, so a failed restore leaves the current environment untouched. Virtual
+  snapshots restore via the base class (physical ancestor + replay); `fork()` accepts physical only.
+- `.exec_command(cmd)` runs in the current fork (feeds benchmark + command log);
+  `.exec_command(cmd, fork_id=f)` runs in fork `f` (benchmark-timed only). Commands on **different forks
+  run concurrently**; commands on the same fork serialize.
+- `.fork(snapshot_id, n=1, ids=None)` is the **only bare materialization verb**: `n` live forks of a
+  physical snapshot in parallel, returning `WaypointFork(id, pid, socket, base_checkpoint, ...)` handles.
+- `.destroy_fork(fork_id)` kills a fork — state is lost (park for a lossless retire); refuses `main` and
+  the current fork. `.list_forks()` / `.live_forks` inspect live forks.
+- **Refused by design:** `create_env_from_snapshot()` — redundant with `fork()`.
 
-See `scripts/waypoint_fork_demo.py` for an end-to-end tour (fork → diverge → recursive snapshot → restore).
+See `scripts/waypoint_fork_demo.py` for an end-to-end tour (fork → diverge → recursive snapshot → refusals → destroy).
 
 ### 🧪 Benchmark
 You can enter the benchmark interface through the `.stats` attribute of any `EnvironmentManager` subclass instance.

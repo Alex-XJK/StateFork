@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, List
 from .base_env_manager import EnvironmentManager, SnapshotNode
 from .benchmark import Calculator
-from decider import Decider
+from decider import Decider, AlwaysTrueDecider
 
 logger = logging.getLogger("EnvManager.Waypoint")
 
@@ -181,23 +181,35 @@ class WaypointAttachManager(EnvironmentManager):
     """
     Attach to an existing Waypoint session and manage its checkpoints/forks.
 
-    In the fork-based Waypoint model a session owns a live ``main`` fork plus
-    any number of additional live forks. This manager operates on one
-    "current" fork at a time (default: ``main``): :meth:`snapshot` seals that
-    fork into an immutable checkpoint, and :meth:`restore` materializes a fresh
-    live fork from a checkpoint and switches the current fork to it.
+    Single-verb design with a current branch: every primitive issues exactly
+    one Waypoint command, and fork-targeting is an optional argument on the
+    generic verbs rather than a parallel API. The manager maintains a *current
+    fork* (initially ``main``) -- the branch the generic verbs act on --
+    exposed as :attr:`current_fork_id`. ``snapshot()`` / ``exec_command()``
+    default to it and accept ``fork_id=`` to target any live fork;
+    ``snapshot(..., park=True)`` seals a fork *without* resuming it (cheapest
+    persist; revive later with ``fork()``).
+
+    :meth:`restore` moves the current branch: an **explicit two-primitive
+    macro** -- the target snapshot is materialized as a fresh fork that
+    becomes current, then the departing fork is destroyed. Its un-sealed
+    state is discarded *by contract*: seal it first (``snapshot()``, or
+    ``park`` for a lossless retire) if you want to keep it; ``main`` is never
+    destroyed and simply stays live. The target is materialized before
+    anything is destroyed, so a failed restore leaves the current environment
+    untouched. ``create_env_from_snapshot()`` remains refused (redundant with
+    ``fork()``, the only bare materialization verb).
     """
 
     def __init__(self,
                  session_id: str,
                  target_pid: Optional[int] = None,
                  decider: Optional[Decider] = None,
-                 current_fork_id: str = MAIN_FORK_ID,
                  ):
         super().__init__(backend_name="Waypoint", decider=decider)
         self.session_id = session_id
-        # The fork that snapshot/exec/restore currently act on.
-        self._current_fork_id = current_fork_id
+        # The current branch: the fork the generic verbs act on.
+        self._current_fork_id = MAIN_FORK_ID
         # Live forks known to this manager, keyed by fork id.
         self._live_forks: Dict[str, WaypointFork] = {}
         # target_pid is obsolete in the fork model (a fork *is* its process
@@ -212,7 +224,15 @@ class WaypointAttachManager(EnvironmentManager):
             self.is_cleaned_up = True
             raise
 
-        logger.info(f"Attaching to Waypoint session {self.session_id} (current fork '{self._current_fork_id}')...")
+        if not isinstance(self.decider, AlwaysTrueDecider):
+            # Virtual snapshots restore fine (ancestor + replay), but only
+            # physical snapshots can be fork()ed into parallel instances.
+            logger.info(
+                "Note: virtual snapshots restore via replay on this backend, "
+                "but fork() accepts physical snapshots only."
+            )
+
+        logger.info(f"Attaching to Waypoint session {self.session_id}...")
 
         sid, _ = self._core_snapshot()
         if sid is None:
@@ -223,16 +243,173 @@ class WaypointAttachManager(EnvironmentManager):
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
-        # Track the current fork; list_forks() hydrates its pid/socket.
-        self._live_forks[self._current_fork_id] = WaypointFork(
-            id=self._current_fork_id, pid=0, socket="", base_checkpoint=sid,
+        # Track the main fork; list_forks() hydrates its pid/socket.
+        self._live_forks[MAIN_FORK_ID] = WaypointFork(
+            id=MAIN_FORK_ID, pid=0, socket="", base_checkpoint=sid,
         )
         self.list_forks()
 
+    # ===== Generic verbs (single-verb design: optional fork_id, default = current) =====
+
     @property
     def current_fork_id(self) -> str:
-        """The fork that snapshot/exec/restore currently operate on."""
+        """The current branch: the fork the generic verbs act on."""
         return self._current_fork_id
+
+    def _core_restore(self, snapshot_id: str) -> tuple[bool, float]:
+        """
+        Move the current branch to a snapshot -- an explicit two-primitive macro:
+
+        1. Materialize the target as a fresh fork (``fork``) and make it current.
+        2. Destroy the departing fork. Its un-sealed state is DISCARDED by
+           contract -- seal it first (snapshot(), or park for a lossless
+           retire) if you want to keep it. ``main`` is never destroyed
+           (session anchor); it simply stays live.
+
+        The target is materialized *before* anything is destroyed, so a failed
+        restore leaves the current environment untouched. The base class
+        realigns lineage (current/last snapshot ids) after success and handles
+        virtual snapshots (restore ancestor here, then replay).
+        """
+        start = time.time()
+
+        forks = self.fork(snapshot_id, n=1)
+        if not forks:
+            logger.error(
+                f"Restore could not materialize {snapshot_id}; "
+                "current branch unchanged."
+            )
+            return False, 0.0
+
+        departing = self._current_fork_id
+        self._current_fork_id = forks[0].id
+        if departing not in (MAIN_FORK_ID, forks[0].id):
+            if not self.destroy_fork(departing):
+                logger.warning(
+                    f"Could not destroy departing fork {departing}; it stays "
+                    "live (retire it with destroy_fork() or park it)."
+                )
+
+        return True, time.time() - start
+
+    def create_env_from_snapshot(self, snapshot_id: str) -> Optional[str]:
+        """
+        Unsupported by design: on this backend materializing a snapshot IS
+        forking, and one operation gets one name -- use :meth:`fork`.
+        """
+        logger.error(
+            "create_env_from_snapshot is redundant on the fork-based Waypoint "
+            f"backend: use fork('{snapshot_id}') -- the same operation under "
+            "its native name."
+        )
+        return None
+
+    def snapshot(self, fork_id: Optional[str] = None, park: bool = False) -> Optional[str]:
+        """
+        Seal a live fork into a new immutable snapshot (one waypoint command).
+
+        - No arguments: the generic verb -- seals the *current* fork through
+          the base template (Decider consulted, linear lineage). The fork is
+          resumed on top of the new snapshot (note: its PID changes -- the
+          backend snapshot is a destructive dump followed by a re-restore).
+        - ``fork_id=``: seals that fork instead -- always physical; the new
+          snapshot enters the tree as a child of the fork's previous base.
+        - ``park=True``: seal *without resuming* (``snapshot --park``), the
+          cheapest persist. The fork ceases to exist; its state survives as
+          the snapshot and can be revived with fork(). Parking the current
+          fork moves the current branch back to ``main``; ``main`` itself
+          cannot be parked (session anchor).
+        """
+        target = fork_id if fork_id is not None else self._current_fork_id
+        if park:
+            return self._seal_fork(target, park=True)
+        if target == self._current_fork_id:
+            return super().snapshot()  # template path; _core_snapshot seals current
+        return self._seal_fork(target, park=False)
+
+    def _seal_fork(self, fork_id: str, park: bool) -> Optional[str]:
+        """Named-fork seal (`waypoint snapshot [--park]`) + tree bookkeeping."""
+        if park and fork_id == MAIN_FORK_ID:
+            logger.error("Refusing to park `main`: the session needs its live anchor fork.")
+            return None
+
+        if fork_id not in self._live_forks:
+            self.list_forks()  # it may exist on disk; refresh and re-check
+        record = self._live_forks.get(fork_id)
+        if record is None:
+            logger.error(f"Fork {fork_id} not found.")
+            return None
+
+        snapshot_id = str(uuid.uuid4())[:8]
+        args = ["snapshot", self.session_id, fork_id, snapshot_id]
+        if park:
+            args.append("--park")
+        start = time.time()
+        try:
+            _run_waypoint(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Waypoint snapshot of fork {fork_id} failed: {_cpe_detail(e)}")
+            return None
+        elapsed = time.time() - start
+
+        self.snapshots[snapshot_id] = snapshot_id
+        self._stats.add_entry("park" if park else "snapshot", snapshot_id, elapsed)
+
+        # Graph: child of the fork's previous base checkpoint.
+        parent_id = record.base_checkpoint or None
+        self.snapshot_graph[snapshot_id] = SnapshotNode(snapshot_id=snapshot_id, parent_id=parent_id)
+        if parent_id and parent_id in self.snapshot_graph:
+            self.snapshot_graph[parent_id].children.append(snapshot_id)
+
+        if park:
+            # The fork is gone; only the snapshot remains.
+            self._live_forks.pop(fork_id, None)
+            if fork_id == self._current_fork_id:
+                # Like a stash: state saved, branch returns to the anchor.
+                self._current_fork_id = MAIN_FORK_ID
+                main_rec = self._live_forks.get(MAIN_FORK_ID)
+                base = (main_rec.base_checkpoint or None) if main_rec else None
+                self.current_snapshot_id = base
+                self.last_snapshot_id = base
+                self._command_log = []
+                self._cumulative_exec_time = 0.0
+                logger.info("Current branch parked; the current fork is now `main`.")
+            logger.info(f"Fork {fork_id} parked as {snapshot_id} in {elapsed:.4f}s")
+        else:
+            record.base_checkpoint = snapshot_id
+            # The destructive snapshot resumed the fork under a fresh PID and
+            # socket; refresh the registry so records stay accurate.
+            self.list_forks()
+            logger.info(f"Fork {fork_id} snapshotted as {snapshot_id} in {elapsed:.4f}s")
+        return snapshot_id
+
+    def exec_command(self, command: List[str] | str, timeout: Optional[float] = None,
+                     fork_id: Optional[str] = None) -> tuple[int, str, str]:
+        """
+        Run one command in a live fork's persistent shell (one waypoint command).
+
+        With no ``fork_id`` this is the generic verb: it runs in the *current*
+        fork via the base template (benchmark log + command log + cumulative
+        exec time). With ``fork_id=`` it runs in that fork; the call is timed
+        into the benchmark log, but feeds neither the command log nor the
+        decider (those model the current branch only). Commands on different
+        forks may run concurrently; Waypoint serializes commands on the same
+        fork.
+        """
+        target = fork_id if fork_id is not None else self._current_fork_id
+        if target == self._current_fork_id:
+            return super().exec_command(command, timeout)
+
+        start = time.time()
+        rc, out, err = self._exec_raw(target, command, timeout)
+        self._stats.add_entry("exec", target, time.time() - start)
+        return rc, out, err
 
 
     def _core_snapshot(self) -> tuple[Optional[str], float]:
@@ -253,41 +430,29 @@ class WaypointAttachManager(EnvironmentManager):
             fork = self._live_forks.get(self._current_fork_id)
             if fork:
                 fork.base_checkpoint = snapshot_id
+            # The destructive snapshot resumed the fork under a fresh PID and
+            # socket; refresh the registry so records stay accurate.
+            self.list_forks()
             return snapshot_id, elapsed
         except subprocess.CalledProcessError as e:
             logger.error(f"Waypoint snapshot failed: {_cpe_detail(e)}")
             return None, 0.0
 
     def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
-        if snapshot_id not in self.snapshots:
-            logger.warning(f"Snapshot {snapshot_id} not found.")
-            return None, 0.0
+        # Unreachable: restore()/create_env_from_snapshot() are refused on this
+        # backend (fork() is the only materialization verb). Implemented only
+        # to satisfy the EnvironmentManager ABC.
+        logger.error("Not supported on the fork-based Waypoint backend; use fork().")
+        return None, 0.0
 
-        start = time.time()
-        forks = self.fork(snapshot_id, n=1)
-        if not forks:
-            return None, 0.0
-        elapsed = time.time() - start
-
-        new_fork = forks[0]
-        previous_fork_id = self._current_fork_id
-        self._current_fork_id = new_fork.id
-
-        # Replace semantics: the previous environment is superseded by the new
-        # fork. Destroy it so restore loops don't accumulate live shells --
-        # except `main`, which anchors the session.
-        if previous_fork_id not in (MAIN_FORK_ID, new_fork.id):
-            self.destroy_fork(previous_fork_id)
-
-        return new_fork.id, elapsed
-
-    def _core_cleanup(self):
+    def _core_cleanup(self) -> bool:
         logger.info("Shutting down Waypoint environment...")
         try:
             _run_waypoint(
                 ["cleanup", self.session_id],
                 check=True,
             )
+            return True
         except subprocess.CalledProcessError as e:
             logger.error(f"Waypoint cleanup failed: {e}")
             logger.info("Attempting force cleanup...")
@@ -296,14 +461,15 @@ class WaypointAttachManager(EnvironmentManager):
                     ["cleanup", self.session_id, "--force"],
                     check=True,
                 )
+                return True
             except subprocess.CalledProcessError as e:
                 logger.error(f"Waypoint force cleanup failed: {e}")
-                return
+                return False
 
     def _core_exec(self, command: List[str] | str, timeout: Optional[float]) -> tuple[int, str, str]:
-        return self.exec_in_fork(self._current_fork_id, command, timeout=timeout)
+        return self._exec_raw(self._current_fork_id, command, timeout)
 
-    # ===== Concurrent forking API (Waypoint-specific extension) =====
+    # ===== Fork lifecycle API (Waypoint-specific extension) =====
 
     @property
     def live_forks(self) -> List[WaypointFork]:
@@ -373,15 +539,9 @@ class WaypointAttachManager(EnvironmentManager):
         logger.info(f"Materialized {len(results)}/{n} fork(s) from snapshot {snapshot_id}")
         return results
 
-    def exec_in_fork(self, fork_id: str, command: List[str] | str,
-                     timeout: Optional[float] = None) -> tuple[int, str, str]:
-        """
-        Run one command in a live fork's persistent shell; returns (rc, stdout, stderr).
-        Raw primitive: unlike exec_command() it records no stats and no command
-        log (the log feeds virtual-snapshot replay of the current environment
-        only). Commands on different forks may run concurrently; Waypoint
-        serializes commands on the same fork.
-        """
+    def _exec_raw(self, fork_id: str, command: List[str] | str,
+                  timeout: Optional[float] = None) -> tuple[int, str, str]:
+        """One `waypoint exec` in a fork's persistent shell -> (rc, stdout, stderr)."""
         if not self.session_id:
             return -1, "", "No session_id available"
 
@@ -401,60 +561,23 @@ class WaypointAttachManager(EnvironmentManager):
             out = e.stdout or ""
             err = (e.stderr or "") + f"\n[timeout after {timeout}s]"
             logger.error(f"Waypoint exec timeout: {e}")
-            return -1, out, err
+            return -2, out, err  # -2 = TIMEOUT; -1 = backend failure
         except Exception as e:
             logger.error(f"Waypoint exec failed: {e}")
             return -1, "", str(e)
 
-    def snapshot_fork(self, fork_id: str) -> Optional[str]:
-        """
-        Seal a live fork into a new physical snapshot. The fork stays live and
-        is rebased onto the new snapshot; the snapshot enters the tree as a
-        child of the fork's previous base. For the current fork this delegates
-        to snapshot() (so the attached Decider still applies).
-        """
-        if fork_id == self._current_fork_id:
-            return self.snapshot()
-
-        if fork_id not in self._live_forks:
-            self.list_forks()  # it may exist on disk; refresh and re-check
-        record = self._live_forks.get(fork_id)
-        if record is None:
-            logger.error(f"Fork {fork_id} not found.")
-            return None
-
-        snapshot_id = str(uuid.uuid4())[:8]
-        start = time.time()
-        try:
-            _run_waypoint(
-                ["snapshot", self.session_id, fork_id, snapshot_id],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Waypoint snapshot of fork {fork_id} failed: {_cpe_detail(e)}")
-            return None
-        elapsed = time.time() - start
-
-        self.snapshots[snapshot_id] = snapshot_id
-        self._stats.add_entry("snapshot", snapshot_id, elapsed)
-
-        # Graph: child of the fork's previous base checkpoint.
-        parent_id = record.base_checkpoint or None
-        self.snapshot_graph[snapshot_id] = SnapshotNode(snapshot_id=snapshot_id, parent_id=parent_id)
-        if parent_id and parent_id in self.snapshot_graph:
-            self.snapshot_graph[parent_id].children.append(snapshot_id)
-        record.base_checkpoint = snapshot_id
-
-        logger.info(f"Fork {fork_id} snapshotted as {snapshot_id} in {elapsed:.4f}s")
-        return snapshot_id
-
     def destroy_fork(self, fork_id: str) -> bool:
-        """Kill a live fork and remove its private layers. Refuses the current fork."""
+        """Kill a live fork and remove its private layers (state is LOST --
+        use snapshot(fork_id=..., park=True) to persist it instead). Refuses
+        `main` (session anchor) and the current fork (restore elsewhere first)."""
+        if fork_id == MAIN_FORK_ID:
+            logger.error("Refusing to destroy `main`: it anchors the session.")
+            return False
         if fork_id == self._current_fork_id:
-            logger.error("Refusing to destroy the current fork; restore/switch elsewhere first.")
+            logger.error(
+                "Refusing to destroy the current fork; restore() to another "
+                "snapshot (or park it) first."
+            )
             return False
         try:
             _run_waypoint(

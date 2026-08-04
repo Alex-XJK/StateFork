@@ -246,18 +246,21 @@ class EnvironmentManager(ABC):
         """
         pass
 
-    def cleanup(self) -> None:
+    def cleanup(self) -> bool:
         """
         Clean up any resources used by the environment manager.
         This should be called when the manager is no longer needed.
+        Returns True on clean teardown; False only if the backend reported
+        failure (backends whose _core_cleanup returns None count as success).
         """
         logger.info("Cleaning up environment...")
 
         # Core Cleanup
-        self._core_cleanup()
+        ok = self._core_cleanup()
 
         self.is_cleaned_up = True
         logger.info("Cleanup complete.")
+        return ok is not False
 
     @abstractmethod
     def _core_cleanup(self) -> None:
