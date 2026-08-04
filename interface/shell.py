@@ -7,14 +7,13 @@ from decider import RandomDecider, AlwaysTrueDecider, AlwaysFalseDecider, Thresh
 
 
 AVAILABLE_COMMANDS = [
-    "snapshot [fork]",
+    "snapshot [fork] [--park]",
     "restore <id>",
     "step",
     "cmd <command>",
     "fork <id> [n]",
     "forks",
     "fexec <fork> <cmd>",
-    "park <fork>",
     "destroy <fork>",
     "tree",
     "stats",
@@ -99,16 +98,34 @@ def interactive_shell(manager):
             cmd = "exit"
 
         if cmd == "snapshot" or cmd.startswith("snapshot "):
-            _, _, fid = cmd.partition(" ")
-            fid = fid.strip()
-            if fid:
-                # Fork-targeted form: only the Waypoint backend supports it.
+            tokens = cmd.split()[1:]
+            park = "--park" in tokens
+            rest = [t for t in tokens if t != "--park"]
+            if len(rest) > 1:
+                print("Usage: snapshot [fork_id] [--park]")
+                continue
+            fid = rest[0] if rest else None
+
+            if fid is not None or park:
+                # Fork-targeted / park forms: only the Waypoint backend has them.
                 if not has_fork_api(manager):
                     continue
-                sid = manager.snapshot(fork_id=fid)
+                # Parking the current fork moves the pointer, so name the
+                # target before the call.
+                target = fid or manager.current_fork_id
+                sid = manager.snapshot(fork_id=fid, park=park)
             else:
                 sid = manager.snapshot()
-            print(f"Snapshot created: {sid}" if sid else "Snapshot failed.")
+
+            if not sid:
+                print("Park failed." if park else "Snapshot failed.")
+                continue
+            if park:
+                print(f"Fork {target} parked as snapshot {sid}")
+                if fid is None:
+                    print(f"Current fork: {manager.current_fork_id}")
+            else:
+                print(f"Snapshot created: {sid}")
 
         elif cmd.startswith("restore"):
             _, _, sid = cmd.partition(" ")
@@ -197,17 +214,6 @@ def interactive_shell(manager):
                 continue
             ok = manager.destroy_fork(fork_id)
             print(f"Fork {fork_id} destroyed." if ok else f"Failed to destroy fork {fork_id}.")
-
-        elif cmd.startswith("park"):
-            if not has_fork_api(manager):
-                continue
-            _, _, fork_id = cmd.partition(" ")
-            fork_id = fork_id.strip()
-            if not fork_id:
-                print("Usage: park <fork_id>")
-                continue
-            sid = manager.snapshot(fork_id=fork_id, park=True)
-            print(f"Fork {fork_id} parked as snapshot {sid}" if sid else "Park failed.")
 
         elif cmd == "tree":
             print(manager.print_snapshot_tree())
