@@ -88,6 +88,9 @@ verbs**, not a parallel API. The generic verbs act on the **current fork** (`.cu
   physical snapshot in parallel, returning `WaypointFork(id, pid, socket, base_checkpoint, ...)` handles.
 - `.destroy_fork(fork_id)` kills a fork — state is lost (park for a lossless retire); refuses `main` and
   the current fork. `.list_forks()` / `.live_forks` inspect live forks.
+- `.sync_snapshot_tree()` hydrates the snapshot tree from the session's checkpoint DAG on disk. It runs
+  automatically when a manager attaches, so **`waypoint_attach` to an existing session inherits its full
+  history** (parent links included) instead of starting from a blank tree.
 - **Refused by design:** `create_env_from_snapshot()` — redundant with `fork()`.
 
 See `scripts/waypoint_fork_demo.py` for an end-to-end tour (fork → diverge → recursive snapshot → refusals → destroy).

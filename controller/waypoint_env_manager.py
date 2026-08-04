@@ -234,20 +234,35 @@ class WaypointAttachManager(EnvironmentManager):
 
         logger.info(f"Attaching to Waypoint session {self.session_id}...")
 
+        # Inherit whatever already exists on disk: the checkpoint DAG and the
+        # live fork registry. Attaching to a session created elsewhere thus
+        # starts with its full history rather than a blank tree.
+        self.sync_snapshot_tree()
+        self.list_forks()
+
+        # The initial snapshot parents onto whatever the current fork already
+        # sits on (None when the session had no checkpoints yet).
+        record = self._live_forks.get(self._current_fork_id)
+        parent_id = (record.base_checkpoint or None) if record else None
+
         sid, _ = self._core_snapshot()
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 
-        # Init the Tree Graph
-        self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=None)
+        # Init/extend the Tree Graph
+        if sid not in self.snapshot_graph:
+            self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=parent_id)
+            if parent_id and parent_id in self.snapshot_graph:
+                self.snapshot_graph[parent_id].children.append(sid)
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
-        # Track the main fork; list_forks() hydrates its pid/socket.
-        self._live_forks[MAIN_FORK_ID] = WaypointFork(
-            id=MAIN_FORK_ID, pid=0, socket="", base_checkpoint=sid,
-        )
-        self.list_forks()
+        if self._current_fork_id not in self._live_forks:
+            # Registry unavailable (e.g. `list` failed); keep a minimal record
+            # so lineage bookkeeping still works.
+            self._live_forks[self._current_fork_id] = WaypointFork(
+                id=self._current_fork_id, pid=0, socket="", base_checkpoint=sid,
+            )
 
     # ===== Generic verbs (single-verb design: optional fork_id, default = current) =====
 
@@ -334,7 +349,11 @@ class WaypointAttachManager(EnvironmentManager):
             return None
 
         if fork_id not in self._live_forks:
-            self.list_forks()  # it may exist on disk; refresh and re-check
+            # It may exist on disk (another process/manager created it): resync
+            # the fork registry AND the DAG, so the base checkpoint this
+            # snapshot parents onto is present in the tree.
+            self.sync_snapshot_tree()
+            self.list_forks()
         record = self._live_forks.get(fork_id)
         if record is None:
             logger.error(f"Fork {fork_id} not found.")
@@ -593,6 +612,62 @@ class WaypointAttachManager(EnvironmentManager):
         self._live_forks.pop(fork_id, None)
         logger.info(f"Fork {fork_id} destroyed.")
         return True
+
+    def sync_snapshot_tree(self) -> int:
+        """
+        Hydrate the snapshot tree from the session's checkpoint DAG on disk.
+
+        `waypoint list --json` reports every checkpoint with its parent, so a
+        manager attaching to an existing session inherits that history instead
+        of starting from a blank tree (without this, sealing a fork created by
+        someone else would produce a node whose parent is unknown -- forkable,
+        but invisible in print_snapshot_tree()). Locally known nodes are left
+        untouched: they may carry virtual-snapshot state the backend cannot
+        know about. Returns the number of nodes added.
+        """
+        try:
+            proc = _run_waypoint(
+                ["list", self.session_id, "--json"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            listing = json.loads(proc.stdout)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Waypoint list failed: {_cpe_detail(e)}")
+            return 0
+        except json.JSONDecodeError as e:
+            logger.error(f"Waypoint list returned invalid JSON: {e}")
+            return 0
+
+        entries = [c for c in (listing.get("checkpoints") or []) if c.get("id")]
+
+        # Pass 1: create the nodes. Parents are not guaranteed to appear before
+        # their children in the listing, so links are deferred to pass 2.
+        added = 0
+        for entry in entries:
+            cid = entry["id"]
+            self.snapshots.setdefault(cid, cid)
+            if cid not in self.snapshot_graph:
+                self.snapshot_graph[cid] = SnapshotNode(
+                    snapshot_id=cid,
+                    parent_id=entry.get("parent_id") or None,
+                )
+                added += 1
+
+        # Pass 2: link children (skipping parents outside this graph, and
+        # tolerating a re-sync of nodes that are already linked).
+        for entry in entries:
+            node = self.snapshot_graph[entry["id"]]
+            if node.parent_id and node.parent_id in self.snapshot_graph:
+                siblings = self.snapshot_graph[node.parent_id].children
+                if node.snapshot_id not in siblings:
+                    siblings.append(node.snapshot_id)
+
+        if added:
+            logger.info(f"Hydrated {added} checkpoint(s) from session {self.session_id}.")
+        return added
 
     def list_forks(self) -> List[WaypointFork]:
         """Refresh the live-fork registry from `waypoint list --json` and return it."""
