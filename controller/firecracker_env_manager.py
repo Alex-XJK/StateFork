@@ -46,12 +46,12 @@ class FireAttachManager(EnvironmentManager):
 
         # base snapshot
         time.sleep(3) # need to ensure not snapshotting too early (fatal on restore)
-        sid, _ = self._core_snapshot()
+        sid, _ = self._core_snapshot(self.current_branch_id)
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 
         # Init the Tree Graph
-        self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=None)
+        self._record_snapshot_node(SnapshotNode(snapshot_id=sid, parent_id=None))
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
@@ -100,7 +100,7 @@ class FireAttachManager(EnvironmentManager):
         logger.error(f"Failed to resume VM")
         return False
 
-    def _core_snapshot(self) -> tuple[Optional[str], float]:
+    def _core_snapshot(self, branch_id: str) -> tuple[Optional[str], float]:
         snapshot_id = str(uuid.uuid4())[:8]
 
         snapshot_dir = self.checkpoint_dir / snapshot_id
@@ -141,14 +141,14 @@ class FireAttachManager(EnvironmentManager):
 
         elapsed = time.time() - start
 
-        self.snapshots[snapshot_id] = snapshot_id
+        self._register_snapshot_resource(snapshot_id, snapshot_id)
         return snapshot_id, elapsed
 
-    def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
-        snapshot_name = self.snapshots.get(snapshot_id)
+    def _core_restore(self, snapshot_id: str, branch_id: str) -> tuple[bool, float]:
+        snapshot_name = self._snapshot_resource(snapshot_id)
         if not snapshot_name:
             logger.warning(f"Snapshot ID {snapshot_id} not found.")
-            return None, 0.0
+            return False, 0.0
 
         # check if ssh is open - wouldn't be right after restore (to decrease restore time cost)
         # ASK: should this be included in snapshot time?
@@ -195,11 +195,11 @@ class FireAttachManager(EnvironmentManager):
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.stdout.strip() == ("400"):
             logger.error(f"Failed to restore snapshot")
-            return None, None
+            return False, 0.0
 
         elapsed = time.time() - start
         # don't reopen ssh to save time
-        return snapshot_name, elapsed
+        return True, elapsed
 
 
     def _core_cleanup(self):
@@ -227,7 +227,7 @@ class FireAttachManager(EnvironmentManager):
             logger.error(f"Firecracker cleanup failed: {e}")
             return
 
-    def _core_exec(self, command, timeout=None):
+    def _core_exec(self, command, timeout=None, branch_id: str = "main"):
         # check if ssh is open - wouldn't be right after restore (to decrease restore time cost)
         if self.ssh is None or not self.ssh.get_transport() or not self.ssh.get_transport().is_active():
             self.ssh.connect(hostname=self.microvm_ip, username="root", pkey=self.param_key)

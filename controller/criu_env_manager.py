@@ -43,12 +43,12 @@ class CRIUAttachManager(EnvironmentManager):
         self.app_pid = target_pid
         logger.info(f"Attaching to existing APP process with PID {self.app_pid}...")
 
-        sid, _ = self._core_snapshot()
+        sid, _ = self._core_snapshot(self.current_branch_id)
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 
         # Init the Tree Graph
-        self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=None)
+        self._record_snapshot_node(SnapshotNode(snapshot_id=sid, parent_id=None))
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
@@ -79,7 +79,7 @@ class CRIUAttachManager(EnvironmentManager):
                 proc.wait(timeout=hard_timeout)
                 return
 
-    def _core_snapshot(self) -> tuple[Optional[str], float]:
+    def _core_snapshot(self, branch_id: str) -> tuple[Optional[str], float]:
         snapshot_id = str(uuid.uuid4())[:8]
         snapshot_path = os.path.join(self.work_dir, snapshot_id)
         os.makedirs(snapshot_path, exist_ok=True)
@@ -95,17 +95,17 @@ class CRIUAttachManager(EnvironmentManager):
                 "--leave-running"
             ], check=True)
             elapsed = time.time() - start
-            self.snapshots[snapshot_id] = snapshot_path
+            self._register_snapshot_resource(snapshot_id, snapshot_path)
             return snapshot_id, elapsed
         except subprocess.CalledProcessError as e:
             logger.error(f"CRIU snapshot failed: {e}")
             return None, 0.0
 
-    def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
-        snapshot_path = self.snapshots.get(snapshot_id)
+    def _core_restore(self, snapshot_id: str, branch_id: str) -> tuple[bool, float]:
+        snapshot_path = self._snapshot_resource(snapshot_id)
         if not snapshot_path:
             logger.warning(f"Snapshot {snapshot_id} not found.")
-            return None, 0.0
+            return False, 0.0
 
         # Terminate the existing APP process
         self.__kill_original_process(force=True, hard_timeout=0.01)
@@ -119,10 +119,10 @@ class CRIUAttachManager(EnvironmentManager):
                 "--shell-job"
             ])
             elapsed = time.time() - start
-            return snapshot_id, elapsed
+            return True, elapsed
         except subprocess.CalledProcessError as e:
             logger.error(f"CRIU restore failed: {e}")
-            return None, 0.0
+            return False, 0.0
 
     def _core_cleanup(self):
         logger.info("Shutting down CRIU environment...")

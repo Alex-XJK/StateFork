@@ -39,12 +39,12 @@ class HybridAttachManager(EnvironmentManager):
         self.__ensure_container_running()
 
         # Take initial snapshot
-        sid, _ = self._core_snapshot()
+        sid, _ = self._core_snapshot(self.current_branch_id)
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 
         # Init the Tree Graph
-        self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=None)
+        self._record_snapshot_node(SnapshotNode(snapshot_id=sid, parent_id=None))
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
@@ -58,7 +58,7 @@ class HybridAttachManager(EnvironmentManager):
             raise RuntimeError(f"Container '{self.container_name}' is not running. Please start it before using this manager.")
         logger.debug(f"Pass validation: Container '{self.container_name}' is running.")
 
-    def _core_snapshot(self) -> tuple[Optional[str], float]:
+    def _core_snapshot(self, branch_id: str) -> tuple[Optional[str], float]:
         sid = str(uuid.uuid4())[:8]
         export_path = os.path.join(self.export_dir, f"{sid}.tar.zstd")
 
@@ -69,15 +69,15 @@ class HybridAttachManager(EnvironmentManager):
         ], stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
 
-        self.snapshots[sid] = export_path
+        self._register_snapshot_resource(sid, export_path)
 
         return sid, elapsed
 
-    def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
-        export_path = self.snapshots.get(snapshot_id)
+    def _core_restore(self, snapshot_id: str, branch_id: str) -> tuple[bool, float]:
+        export_path = self._snapshot_resource(snapshot_id)
         if not export_path:
             logger.warning(f"Snapshot ID {snapshot_id} not found.")
-            return None, 0.0
+            return False, 0.0
 
         # Stop & remove existing container if running
         subprocess.run(["podman", "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -90,7 +90,7 @@ class HybridAttachManager(EnvironmentManager):
         ], stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
 
-        return self.container_name, elapsed
+        return True, elapsed
 
     def _core_cleanup(self):
         logger.info(f"Cleaning up Podman container '{self.container_name}'")
@@ -98,7 +98,7 @@ class HybridAttachManager(EnvironmentManager):
         logger.info(f"Cleaning up Podman checkpoint files in {self.export_dir}")
         shutil.rmtree(self.export_dir, ignore_errors=True)
 
-    def _core_exec(self, command, timeout=None):
+    def _core_exec(self, command, timeout=None, branch_id: str = "main"):
         if isinstance(command, list):
             cmd = ["podman", "exec", self.container_name] + command
         else:
@@ -147,5 +147,3 @@ class HybridBuildManager(HybridAttachManager):
         time.sleep(2)  # wait for app to initialize
 
         super().__init__(container_name=container_name, export_dir=export_dir, decider=decider)
-
-
