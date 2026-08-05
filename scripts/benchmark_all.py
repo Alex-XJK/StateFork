@@ -120,7 +120,7 @@ def test_time(env: EnvironmentManager) -> None:
         tm.log_step("Snapshot", time.time() - start_snap, OpType.SNAPSHOT)
 
         start_restore = time.time()
-        _ = env.create_env_from_snapshot(sid)
+        _ = env.restore(sid)
         tm.log_step("Restore", time.time() - start_restore, OpType.RESTORE)
 
         tm.log_section(f"Wait for Recovery {r+1}", compressed=True)
