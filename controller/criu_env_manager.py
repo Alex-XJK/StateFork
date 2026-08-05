@@ -43,7 +43,7 @@ class CRIUAttachManager(EnvironmentManager):
         self.app_pid = target_pid
         logger.info(f"Attaching to existing APP process with PID {self.app_pid}...")
 
-        sid, _ = self._core_snapshot(self.current_branch_id)
+        sid, _ = self._core_snapshot(self._get_current_branch_id())
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 

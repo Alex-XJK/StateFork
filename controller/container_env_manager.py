@@ -199,6 +199,6 @@ class ContainerBuildManager(ContainerAttachManager):
         super().__init__(backend=backend, container_name="statefork_active", base_image=base_image, extra_args=extra_args, decider=decider)
 
         logger.info("Creating initial environment from base image...")
-        restored, _ = self._core_restore("base", self.current_branch_id)
+        restored, _ = self._core_restore("base", self._get_current_branch_id())
         if not restored:
             raise RuntimeError("Failed to create initial environment from base image.")

@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from controller.base_env_manager import EnvironmentManager
+from controller.container_env_manager import ContainerBuildManager
 from controller.forkable_env_manager import ForkableEnvironmentManager
 from controller.waypoint_env_manager import WaypointAttachManager, WaypointFork
 
 
-class WaypointManagerArchitectureTests(unittest.TestCase):
+class ManagerArchitectureTests(unittest.TestCase):
+    @patch("controller.container_env_manager.subprocess.run")
+    def test_sequential_backend_initialization_uses_protected_branch_id(
+        self,
+        _run,
+    ) -> None:
+        manager = ContainerBuildManager(backend="Docker", dockerfile_dir=".")
+        manager.is_cleaned_up = True
+
+        self.assertEqual(manager.current_snapshot, "base")
+
     def test_waypoint_reuses_public_template_methods(self) -> None:
         self.assertIs(WaypointAttachManager.snapshot, EnvironmentManager.snapshot)
         self.assertIs(WaypointAttachManager.restore, EnvironmentManager.restore)

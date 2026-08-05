@@ -52,7 +52,7 @@ class GvisorAttachManager(EnvironmentManager):
         self.extra_args = extra_args or []
         self.base_image = base_image
 
-        sid, _ = self._core_snapshot(self.current_branch_id)
+        sid, _ = self._core_snapshot(self._get_current_branch_id())
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 
