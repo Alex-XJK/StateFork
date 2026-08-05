@@ -1,4 +1,5 @@
 from .base_env_manager import EnvironmentManager
+from .forkable_env_manager import EnvironmentBranch, ForkableEnvironmentManager
 from .container_env_manager import ContainerAttachManager, ContainerBuildManager
 from .criu_env_manager import CRIUAttachManager, CRIUBuildManager
 from .hybrid_env_manager import HybridAttachManager, HybridBuildManager
