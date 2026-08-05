@@ -89,7 +89,7 @@ so clients can depend on `ForkableEnvironmentManager` rather than detecting a co
   physical snapshot, returning backend-neutral `EnvironmentBranch` records. Waypoint enriches these as
   `WaypointFork(id, pid, socket, base_checkpoint, ...)` handles.
 - `.discard_branch(branch_id)` kills a fork — state is lost (park for a lossless retire); refuses `main` and
-  the current fork. `.list_branches()` / `.live_branches` inspect live forks. Andy's `destroy_fork`,
+  the current fork. `.list_branches()` / `.live_branches` inspect live forks. The earlier `destroy_fork`,
   `list_forks`, `live_forks`, and `current_fork_id` names remain compatibility aliases for now.
 - Waypoint's `.sync_snapshot_tree()` hydrates the snapshot tree from the session's checkpoint DAG on disk. It runs
   automatically when a manager attaches, so **`waypoint_attach` to an existing session inherits its full

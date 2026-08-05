@@ -78,7 +78,7 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
 
     @property
     def live_forks(self) -> List[BranchT]:
-        """Compatibility alias for callers of Andy's original API."""
+        """Compatibility alias for the earlier fork-oriented API."""
         return self.live_branches
 
     def snapshot_branch(
