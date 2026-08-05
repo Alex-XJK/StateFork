@@ -283,48 +283,6 @@ class WaypointAttachManager(ForkableEnvironmentManager[WaypointFork]):
                     base_snapshot_id=sid,
                 )
 
-    def _core_restore(self, snapshot_id: str, branch_id: str) -> tuple[bool, float]:
-        """
-        Move the current branch to a snapshot -- an explicit two-primitive macro:
-
-        1. Materialize the target as a fresh fork (``fork``) and make it current.
-        2. Destroy the departing fork. Its un-sealed state is DISCARDED by
-           contract -- seal it first (snapshot(), or park for a lossless
-           retire) if you want to keep it. ``main`` is never destroyed
-           (session anchor); it simply stays live.
-
-        The target is materialized *before* anything is destroyed, so a failed
-        restore leaves the current environment untouched. The base class
-        realigns lineage (current/last snapshot ids) after success and handles
-        finalizes the new branch's controller bookkeeping after success.
-        """
-        start = time.time()
-
-        # Keep the materialized branch inactive until the base restore template
-        # commits the branch transition and finalizes its position.
-        forks = self._materialize_branches(
-            snapshot_id,
-            [None],
-            activate=False,
-        )
-        if not forks:
-            logger.error(
-                f"Restore could not materialize {snapshot_id}; "
-                "current branch unchanged."
-            )
-            return False, 0.0
-
-        departing = branch_id
-        self._set_current_branch(forks[0].id)
-        if departing not in (MAIN_FORK_ID, forks[0].id):
-            if not self.discard_branch(departing):
-                logger.warning(
-                    f"Could not destroy departing fork {departing}; it stays "
-                    "live (retire it with discard_branch() or park_branch())."
-                )
-
-        return True, time.time() - start
-
     def _snapshot_waypoint(
         self,
         branch_id: str,

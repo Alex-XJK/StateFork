@@ -25,6 +25,10 @@ class ManagerArchitectureTests(unittest.TestCase):
         self.assertIs(WaypointAttachManager.restore, EnvironmentManager.restore)
         self.assertIs(WaypointAttachManager.exec_command, EnvironmentManager.exec_command)
         self.assertIs(WaypointAttachManager.fork, ForkableEnvironmentManager.fork)
+        self.assertIs(
+            WaypointAttachManager._core_restore,
+            ForkableEnvironmentManager._core_restore,
+        )
 
     def test_waypoint_fork_details_remain_compatible(self) -> None:
         legacy = WaypointFork(
