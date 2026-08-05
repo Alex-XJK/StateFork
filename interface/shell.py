@@ -2,14 +2,13 @@ import argparse
 import logging
 import sys
 
-from controller import create_env_manager
+from controller import ForkableEnvironmentManager, create_env_manager
 from decider import RandomDecider, AlwaysTrueDecider, AlwaysFalseDecider, ThresholdDecider
 
 
 AVAILABLE_COMMANDS = [
     "snapshot [fork] [--park]",
     "restore <id>",
-    "step",
     "cmd <command>",
     "fork <id> [n]",
     "forks",
@@ -68,9 +67,9 @@ def print_welcome_message(manager):
     print(f"Available commands: {', '.join(AVAILABLE_COMMANDS)}")
 
 def has_fork_api(manager) -> bool:
-    if hasattr(manager, "fork"):
+    if isinstance(manager, ForkableEnvironmentManager):
         return True
-    print(f"This command requires the Waypoint backend (current: {manager.backend}).")
+    print(f"This command requires a forkable backend (current: {manager.backend}).")
     return False
 
 
@@ -107,13 +106,13 @@ def interactive_shell(manager):
             fid = rest[0] if rest else None
 
             if fid is not None or park:
-                # Fork-targeted / park forms: only the Waypoint backend has them.
+                # Named snapshots and parking require the forkable capability.
                 if not has_fork_api(manager):
                     continue
                 # Parking the current fork moves the pointer, so name the
                 # target before the call.
-                target = fid or manager.current_fork_id
-                sid = manager.snapshot(fork_id=fid, park=park)
+                target = fid or manager.current_branch_id
+                sid = manager.snapshot_branch(target, park=park)
             else:
                 sid = manager.snapshot()
 
@@ -123,7 +122,7 @@ def interactive_shell(manager):
             if park:
                 print(f"Fork {target} parked as snapshot {sid}")
                 if fid is None:
-                    print(f"Current fork: {manager.current_fork_id}")
+                    print(f"Current branch: {manager.current_branch_id}")
             else:
                 print(f"Snapshot created: {sid}")
 
@@ -135,21 +134,8 @@ def interactive_shell(manager):
 
             ok = manager.restore(sid)
             print(f"Restored to snapshot {sid}" if ok else f"Restore failed for {sid}.")
-            if ok and hasattr(manager, "current_fork_id"):
-                print(f"Current fork: {manager.current_fork_id}")
-
-        elif cmd == "step":
-            if hasattr(manager, "fork"):
-                print("step is not supported on the fork-based Waypoint backend "
-                      "(no restore/create_env; use: snapshot, fork <id>, fexec).")
-                continue
-            sid = manager.snapshot()
-            container = manager.create_env_from_snapshot(sid)
-            print(
-                f"Stepped to new container with snapshot {sid}"
-                if container else
-                "Failed to create new container from snapshot."
-            )
+            if ok and isinstance(manager, ForkableEnvironmentManager):
+                print(f"Current branch: {manager.current_branch_id}")
 
         elif cmd.startswith("cmd"):
             _, _, command_text = cmd.partition(" ")
@@ -161,12 +147,15 @@ def interactive_shell(manager):
         elif cmd == "forks":
             if not has_fork_api(manager):
                 continue
-            forks = manager.list_forks()
+            forks = manager.list_branches()
             if not forks:
                 print("No live forks.")
             for f in forks:
-                marker = " (current)" if f.id == manager.current_fork_id else ""
-                print(f"- {f.id}{marker}: pid={f.pid} base={f.base_checkpoint} status={f.status}")
+                marker = " (current)" if f.id == manager.current_branch_id else ""
+                print(
+                    f"- {f.id}{marker}: base={f.base_snapshot_id} "
+                    f"status={f.status}"
+                )
 
         elif cmd.startswith("fork"):
             if not has_fork_api(manager):
@@ -182,7 +171,7 @@ def interactive_shell(manager):
                 continue
             forks = manager.fork(parts[1], n=n)
             for f in forks:
-                print(f"Forked {f.id} (pid={f.pid}, restore={f.restore_duration})")
+                print(f"Forked {f.id} from {f.base_snapshot_id}")
             if not forks:
                 print("Fork failed.")
 
@@ -194,7 +183,7 @@ def interactive_shell(manager):
             if not fork_id or not command_text:
                 print("Usage: fexec <fork_id> <command>")
                 continue
-            rc, out, err = manager.exec_command(command_text, fork_id=fork_id)
+            rc, out, err = manager.exec_on_branch(fork_id, command_text)
             if out.strip():
                 print("--- stdout ---")
                 print(out.strip())
@@ -212,7 +201,7 @@ def interactive_shell(manager):
             if not fork_id:
                 print("Usage: destroy <fork_id>")
                 continue
-            ok = manager.destroy_fork(fork_id)
+            ok = manager.discard_branch(fork_id)
             print(f"Fork {fork_id} destroyed." if ok else f"Failed to destroy fork {fork_id}.")
 
         elif cmd == "tree":

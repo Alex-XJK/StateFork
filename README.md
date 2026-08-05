@@ -28,6 +28,7 @@ StateFork/
   │   ├── __init__.py
   │   ├── README.md
   │   ├── base_env_manager.py
+  │   ├── forkable_env_manager.py
   │   ├── benchmark.py
   │   ├── criu_env_manager.py
   │   ├── container_env_manager.py
@@ -99,7 +100,7 @@ When `snapshot()` is called, StateFork can create either a **physical** or **vir
 - **Physical snapshot** — invokes the backend’s full checkpoint path (e.g., container commit, CRIU dump, or Waypoint capture). Restore reloads that state in one step.
 - **Virtual snapshot** — records only the commands executed since the last snapshot, without calling the backend checkpoint. Restore walks up to the nearest physical ancestor, restores it, then replays the stored commands in order.
 
-This lets callers trade capture cost and storage against restore-time replay. The choice is made by a **`Decider`** strategy passed into any `EnvironmentManager` (default: always physical). Built-in policies live in `decider/`; the interactive shell selects them with `--decider`.
+This lets callers trade capture cost and storage against restore-time replay. The choice is made by a **`Decider`** strategy passed into a sequential `EnvironmentManager` (default: always physical). Built-in policies live in `decider/`; the interactive shell selects them with `--decider`. The initial `ForkableEnvironmentManager` capability requires `AlwaysTrueDecider` while concurrent virtual-snapshot policy remains undefined.
 
 See `controller/README.md` for snapshot/restore behavior and all built-in deciders.
 
@@ -144,7 +145,7 @@ pip install -r requirements.txt
 
 ### Waypoint Method (CRIU + OverlayFS)
 - Waypoint must be installed from: [github.com/Alex-XJK/waypoint](https://github.com/Alex-XJK/waypoint)
-- **A fork-capable Waypoint build is required** (the concurrent-forking model with `checkpoint` / `fork` / `snapshot` / `exec <fork> --` commands). StateFork probes the binary at startup and refuses older `create`/`restore`-style builds with a clear error. Generic verbs act on the **current branch** (a movable current fork, initially `main`) and take an optional `fork_id=` to target any live fork: `snapshot([fork_id=][, park=True])` seals a fork into an immutable checkpoint (`park` seals without resuming — the lossless retire), `exec_command(cmd[, fork_id=])` runs commands in a fork's persistent shell, `restore(id)` moves the current branch (destroying the departing fork — seal or `park` it first to keep its state), and `fork(n)` / `destroy_fork` / `list_forks` manage concurrent live forks. The redundant `create_env_from_snapshot()` is refused by design — `fork()` is the only bare materialization verb. See `scripts/waypoint_fork_demo.py` for an end-to-end tour.
+- **A fork-capable Waypoint build is required** (the concurrent-forking model with `checkpoint` / `fork` / `snapshot` / `exec <fork> --` commands). StateFork probes the binary at startup and refuses older `create`/`restore`-style builds with a clear error. Generic `snapshot()` / `exec_command()` operate on the current branch, while the stronger `ForkableEnvironmentManager` capability exposes `snapshot_branch()`, `exec_on_branch()`, `fork()`, `park_branch()`, `discard_branch()`, and `list_branches()`. `restore(id)` moves the current branch after materializing the target and discards the departing non-`main` branch. See `controller/README.md` for the capability contract.
 - Make the `waypoint` binary discoverable in one of three ways: set the `WAYPOINT_BIN` environment variable to its full path, place it on your `PATH`, or symlink it into the repository root (e.g. `ln -s /path/to/waypoint ./waypoint`). The binary is intentionally not committed. Other Waypoint runtime settings, such as `bash_init`, session storage, and cleanup behavior, are resolved by Waypoint using its own environment/config/default precedence.
 - Root or `sudo` privileges are required.
 
