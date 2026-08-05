@@ -96,6 +96,39 @@ class MemoryForkableManager(ForkableEnvironmentManager[EnvironmentBranch]):
         return self.live_branches
 
 
+class RegistryRefreshingMemoryManager(MemoryForkableManager):
+    """Models a backend that refreshes its registry after snapshotting."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.snapshot_started = threading.Event()
+        self.discard_holds_registry = threading.Event()
+
+    def _core_snapshot(self, branch_id: str) -> tuple[Optional[str], float]:
+        self.snapshot_started.set()
+        self.discard_holds_registry.wait(timeout=0.05)
+        self.list_branches()
+        return super()._core_snapshot(branch_id)
+
+
+class SignalingLock:
+    """Signal when one named thread acquires an underlying reentrant lock."""
+
+    def __init__(self, lock, event: threading.Event, thread_name: str) -> None:
+        self._lock = lock
+        self._event = event
+        self._thread_name = thread_name
+
+    def __enter__(self):
+        self._lock.acquire()
+        if threading.current_thread().name == self._thread_name:
+            self._event.set()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self._lock.release()
+
+
 class ForkableEnvironmentManagerTests(unittest.TestCase):
     def test_capability_is_exported(self) -> None:
         self.assertIs(controller.EnvironmentBranch, EnvironmentBranch)
@@ -153,6 +186,41 @@ class ForkableEnvironmentManagerTests(unittest.TestCase):
             list(pool.map(lambda _: manager.exec_on_branch("left", "work"), range(2)))
 
         self.assertEqual(manager.max_active_execs, 1)
+
+    def test_named_snapshot_and_discard_use_consistent_lock_order(self) -> None:
+        manager = RegistryRefreshingMemoryManager()
+        manager.fork("root", ids=["left"])
+        manager._branch_registry_lock = SignalingLock(
+            manager._branch_registry_lock,
+            manager.discard_holds_registry,
+            "discard-left",
+        )
+        results = {}
+
+        snapshot_thread = threading.Thread(
+            target=lambda: results.setdefault(
+                "snapshot", manager.snapshot_branch("left")
+            ),
+            daemon=True,
+        )
+        snapshot_thread.start()
+        self.assertTrue(manager.snapshot_started.wait(timeout=1))
+
+        discard_thread = threading.Thread(
+            target=lambda: results.setdefault(
+                "discard", manager.discard_branch("left")
+            ),
+            name="discard-left",
+            daemon=True,
+        )
+        discard_thread.start()
+
+        snapshot_thread.join(timeout=1)
+        discard_thread.join(timeout=1)
+
+        self.assertFalse(snapshot_thread.is_alive(), "snapshot deadlocked")
+        self.assertFalse(discard_thread.is_alive(), "discard deadlocked")
+        self.assertEqual(results, {"snapshot": "s1", "discard": True})
 
     def test_restore_switches_only_after_materialization(self) -> None:
         manager = MemoryForkableManager()

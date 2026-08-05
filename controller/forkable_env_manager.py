@@ -256,22 +256,28 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
             return self._discard_branch(branch_id)
 
     def _discard_branch(self, branch_id: str) -> bool:
-        with self._branch_registry_lock:
-            if branch_id == DEFAULT_BRANCH_ID:
-                logger.error("Refusing to discard the default branch.")
-                return False
-            if branch_id == self.current_branch_id:
-                logger.error("Refusing to discard the current branch.")
-                return False
+        if branch_id == DEFAULT_BRANCH_ID:
+            logger.error("Refusing to discard the default branch.")
+            return False
+        if branch_id == self.current_branch_id:
+            logger.error("Refusing to discard the current branch.")
+            return False
 
-            with self._state_lock:
-                branch = self._live_branches.get(branch_id)
-            if branch is None:
-                logger.error("Branch %s not found.", branch_id)
-                return False
+        with self._state_lock:
+            branch = self._live_branches.get(branch_id)
+            state = self._branches.get(branch_id)
+        if branch is None or state is None:
+            logger.error("Branch %s not found.", branch_id)
+            return False
 
-            state = self._get_branch_state(branch_id)
-            with state.operation_lock:
+        # Branch operations always precede registry changes. This matches the
+        # snapshot path, whose backend hook may refresh the branch registry.
+        with state.operation_lock:
+            with self._branch_registry_lock:
+                with self._state_lock:
+                    if branch_id not in self._live_branches or not state.active:
+                        logger.error("Branch %s is no longer registered.", branch_id)
+                        return False
                 if not self._core_discard_branch(branch_id):
                     return False
                 with self._state_lock:
@@ -305,19 +311,23 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
             return self._park_branch(branch_id)
 
     def _park_branch(self, branch_id: str) -> Optional[str]:
-        with self._branch_registry_lock:
-            if branch_id == DEFAULT_BRANCH_ID:
-                logger.error("Refusing to park the default branch.")
-                return None
+        if branch_id == DEFAULT_BRANCH_ID:
+            logger.error("Refusing to park the default branch.")
+            return None
 
-            with self._state_lock:
-                if branch_id not in self._live_branches:
-                    logger.error("Branch %s not found.", branch_id)
-                    return None
-            state = self._get_branch_state(branch_id)
+        with self._state_lock:
+            branch = self._live_branches.get(branch_id)
+            state = self._branches.get(branch_id)
+        if branch is None or state is None:
+            logger.error("Branch %s not found.", branch_id)
+            return None
 
-            with state.operation_lock:
+        with state.operation_lock:
+            with self._branch_registry_lock:
                 with self._state_lock:
+                    if branch_id not in self._live_branches or not state.active:
+                        logger.error("Branch %s is no longer registered.", branch_id)
+                        return None
                     parent_id = state.last_snapshot_id
                 snapshot_id, elapsed = self._core_park_branch(branch_id)
                 if snapshot_id is None:
