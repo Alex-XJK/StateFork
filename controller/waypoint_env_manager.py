@@ -24,7 +24,7 @@ def _resolve_bin(name: str, env_var: str) -> str:
     same name found on ``PATH``, then a repo-local fallback at
     ``STATEFORK_ROOT/<name>`` (typically a developer-created symlink). The path
     is returned even if it does not exist; executability is validated lazily in
-    ``_run_waypoint`` so that importing this module never requires Waypoint to
+    ``_waypoint_argv`` so that importing this module never requires Waypoint to
     be installed (other backends must stay usable without it).
     """
     return (
@@ -36,8 +36,13 @@ def _resolve_bin(name: str, env_var: str) -> str:
 
 WAYPOINT_BIN = _resolve_bin("waypoint", "WAYPOINT_BIN")
 
+# Grace for the client to exit after SIGTERM before we resort to SIGKILL.
+# The real chain is ~1s: sudo relays the signal, bash-init's liveness watcher
+# polls at 100ms, and its foreground-kill has a 500ms grace of its own.
+_CLIENT_TERM_GRACE_SEC = 10
 
-def _run_waypoint(args: list[str], **kwargs):
+
+def _waypoint_argv(args: list[str]) -> list[str]:
     if not (os.path.isfile(WAYPOINT_BIN) and os.access(WAYPOINT_BIN, os.X_OK)):
         raise FileNotFoundError(
             f"Waypoint binary not found or not executable: {WAYPOINT_BIN}. "
@@ -49,11 +54,20 @@ def _run_waypoint(args: list[str], **kwargs):
     # (e.g. Harbor) request privilege escalation via WAYPOINT_CMD_PREFIX, e.g.
     # "sudo -n -E". Empty/unset => run the binary directly (unchanged behavior).
     prefix = shlex.split(os.environ.get("WAYPOINT_CMD_PREFIX", ""))
-    return subprocess.run(
-        [*prefix, WAYPOINT_BIN, *args],
-        cwd=STATEFORK_ROOT,
-        **kwargs,
-    )
+    return [*prefix, WAYPOINT_BIN, *args]
+
+
+def _run_waypoint(args: list[str], **kwargs):
+    return subprocess.run(_waypoint_argv(args), cwd=STATEFORK_ROOT, **kwargs)
+
+
+def _popen_waypoint(args: list[str], **kwargs) -> subprocess.Popen:
+    """Popen variant, so the caller controls how a timeout ends the client.
+
+    ``subprocess.run(timeout=...)`` always ends the child with SIGKILL, which is
+    the one signal sudo cannot relay. See ``_core_exec`` for why that matters.
+    """
+    return subprocess.Popen(_waypoint_argv(args), cwd=STATEFORK_ROOT, **kwargs)
 
 
 class WaypointCalculator(Calculator):
@@ -195,24 +209,46 @@ class WaypointAttachManager(EnvironmentManager):
             cmd_str = shlex.join(command)
 
         # Execute `command` via `waypoint exec <session_id> <args...>`.
-        try:
-            proc = _run_waypoint(
-                ["exec", self.session_id, cmd_str],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-            return proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as e:
-            out = e.stdout or ""
-            err = (e.stderr or "") + f"\n[timeout after {timeout}s]"
-            logger.error(f"Waypoint exec timeout: {e}")
-            return -1, out, err
-        except Exception as e:
-            logger.error(f"Waypoint exec failed: {e}")
-            return -1, "", str(e)
+        # The `with` closes the pipes and reaps the child on every exit path.
+        with _popen_waypoint(
+            ["exec", self.session_id, cmd_str],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as proc:
+            try:
+                out, err = proc.communicate(timeout=timeout)
+                return proc.returncode, out, err
+            except subprocess.TimeoutExpired:
+                # End the client with SIGTERM, never SIGKILL.
+                #
+                # bash-init frees a blocked session only when its client
+                # disconnects: on disconnect it terminates the PTY's foreground
+                # process group and releases the per-session mutex. SIGKILL is
+                # the one signal sudo cannot relay, so under the `sudo -n -E
+                # waypoint` prefix that non-root callers use, it kills the sudo
+                # front end while the real `waypoint exec` survives as an orphan
+                # holding the socket open. The disconnect never happens, the
+                # mutex is never released, and every later exec blocks until
+                # CRIU fails to checkpoint the wedged session. SIGTERM is
+                # relayed and lands on the client itself.
+                proc.terminate()
+                try:
+                    out, err = proc.communicate(timeout=_CLIENT_TERM_GRACE_SEC)
+                except subprocess.TimeoutExpired:
+                    # SIGTERM did not land either. Kill the direct child and
+                    # give up on its output: a bare communicate() would block
+                    # until the pipes reach EOF, and an orphan holding the write
+                    # end is exactly the case SIGKILL cannot resolve.
+                    proc.kill()
+                    out, err = "", ""
+                err = (err or "") + f"\n[timeout after {timeout}s]"
+                logger.error(f"Waypoint exec timeout after {timeout}s; client terminated")
+                return -1, out or "", err
+            except Exception as e:
+                proc.kill()
+                logger.error(f"Waypoint exec failed: {e}")
+                return -1, "", str(e)
 
 class WaypointBuildManager(WaypointAttachManager):
     """
