@@ -442,6 +442,12 @@ class WaypointAttachManager(ForkableEnvironmentManager[WaypointFork]):
         if not self.session_id:
             return False, "No session_id available"
 
+        # Absolutize the host side against *our* cwd before handing it over:
+        # `_run_waypoint` runs the binary with cwd=STATEFORK_ROOT, so a relative
+        # path from the caller would otherwise be resolved inside the StateFork
+        # checkout -- silently, since the copy still succeeds and reports 0.
+        host_path = os.path.abspath(host_path)
+
         fork_ref = f"{branch_id}:{env_path}"
         args = (
             ["cp", self.session_id, host_path, fork_ref]
