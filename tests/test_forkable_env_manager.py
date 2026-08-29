@@ -25,6 +25,7 @@ class MemoryForkableManager(ForkableEnvironmentManager[EnvironmentBranch]):
         self.max_active_execs = 0
         self.exec_delay = 0.03
         self.fail_fork = False
+        self.fail_copy = False
         self.backend_events: list[str] = []
 
         self._register_snapshot_resource("root", "root")
@@ -81,6 +82,25 @@ class MemoryForkableManager(ForkableEnvironmentManager[EnvironmentBranch]):
                 )
             )
         return branches
+
+    def _core_copy(
+        self,
+        branch_id: str,
+        host_path: str,
+        env_path: str,
+        into: bool,
+    ) -> tuple[bool, str]:
+        with self._counter_lock:
+            self.active_execs += 1
+            self.max_active_execs = max(self.max_active_execs, self.active_execs)
+        time.sleep(self.exec_delay)
+        with self._counter_lock:
+            self.active_execs -= 1
+        direction = "in" if into else "out"
+        self.backend_events.append(f"copy-{direction}:{branch_id}:{host_path}:{env_path}")
+        if self.fail_copy:
+            return False, "backend refused"
+        return True, ""
 
     def _core_discard_branch(self, branch_id: str) -> bool:
         self.backend_events.append(f"discard:{branch_id}")
@@ -266,3 +286,81 @@ class ForkableEnvironmentManagerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CopyVerbTests(unittest.TestCase):
+    """copy_in/copy_out and their branch-addressed variants."""
+
+    def setUp(self) -> None:
+        self.manager = MemoryForkableManager()
+
+    def test_copy_in_and_out_target_the_current_branch(self) -> None:
+        self.assertTrue(self.manager.copy_in("/host/a.txt", "/env/a.txt"))
+        self.assertTrue(self.manager.copy_out("/env/b.txt", "/host/b.txt"))
+        self.assertIn(
+            f"copy-in:{DEFAULT_BRANCH_ID}:/host/a.txt:/env/a.txt",
+            self.manager.backend_events,
+        )
+        self.assertIn(
+            f"copy-out:{DEFAULT_BRANCH_ID}:/host/b.txt:/env/b.txt",
+            self.manager.backend_events,
+        )
+
+    def test_branch_variants_address_the_named_branch(self) -> None:
+        (branch,) = self.manager.fork("root", n=1)
+        self.assertTrue(
+            self.manager.copy_in_branch(branch.id, "/host/x", "/env/x")
+        )
+        self.assertTrue(
+            self.manager.copy_out_branch(branch.id, "/env/y", "/host/y")
+        )
+        self.assertIn(
+            f"copy-in:{branch.id}:/host/x:/env/x", self.manager.backend_events
+        )
+        self.assertIn(
+            f"copy-out:{branch.id}:/host/y:/env/y", self.manager.backend_events
+        )
+
+    def test_unknown_branch_is_reported_not_raised(self) -> None:
+        with self.assertLogs("EnvManager", level="ERROR"):
+            self.assertFalse(self.manager.copy_in_branch("ghost", "/h", "/e"))
+        self.assertFalse(
+            any(e.startswith("copy-in:ghost") for e in self.manager.backend_events)
+        )
+
+    def test_backend_failure_is_reported_as_false(self) -> None:
+        self.manager.fail_copy = True
+        with self.assertLogs("EnvManager", level="ERROR"):
+            self.assertFalse(self.manager.copy_in("/host/a", "/env/a"))
+
+    def test_copy_is_not_recorded_as_a_replayable_command(self) -> None:
+        """A copy mutates the filesystem outside the command log; recording it
+        would make a virtual snapshot believe it could be replayed."""
+        self.manager.copy_in("/host/a", "/env/a")
+        state = self.manager._get_branch_state(DEFAULT_BRANCH_ID)
+        self.assertEqual(state.command_log, [])
+
+    def test_copy_serializes_with_exec_on_the_same_branch(self) -> None:
+        """One branch's operation lock must cover copy as well as exec, so a
+        transfer cannot interleave with a command on that branch."""
+        self.manager.exec_delay = 0.05
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(self.manager.copy_in, "/host/a", "/env/a"),
+                pool.submit(self.manager.exec_command, "echo hi"),
+            ]
+            for future in futures:
+                future.result()
+        self.assertEqual(self.manager.max_active_execs, 1)
+
+    def test_copies_on_different_branches_run_concurrently(self) -> None:
+        branches = self.manager.fork("root", n=2)
+        self.manager.exec_delay = 0.05
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(self.manager.copy_in_branch, b.id, "/host/a", "/env/a")
+                for b in branches
+            ]
+            for future in futures:
+                self.assertTrue(future.result())
+        self.assertEqual(self.manager.max_active_execs, 2)

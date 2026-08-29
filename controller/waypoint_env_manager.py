@@ -424,6 +424,44 @@ class WaypointAttachManager(ForkableEnvironmentManager[WaypointFork]):
             logger.error(f"Waypoint exec failed: {e}")
             return -1, "", str(e)
 
+    def _core_copy(
+        self,
+        branch_id: str,
+        host_path: str,
+        env_path: str,
+        into: bool,
+    ) -> tuple[bool, str]:
+        """One `waypoint cp` between the host and a live fork.
+
+        Waypoint performs the copy from inside the fork's namespaces, so the
+        in-fork path resolves in the fork's own filesystem view: an absolute
+        symlink cannot redirect the transfer at the host. It also takes the
+        fork's operation lock, so the copy cannot interleave with a snapshot
+        that would move the fork to a new pid.
+        """
+        if not self.session_id:
+            return False, "No session_id available"
+
+        fork_ref = f"{branch_id}:{env_path}"
+        args = (
+            ["cp", self.session_id, host_path, fork_ref]
+            if into
+            else ["cp", self.session_id, fork_ref, host_path]
+        )
+        try:
+            _run_waypoint(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            return True, ""
+        except subprocess.CalledProcessError as e:
+            return False, _cpe_detail(e)
+        except Exception as e:
+            return False, str(e)
+
     def _core_discard_branch(self, branch_id: str) -> bool:
         """Destroy one Waypoint fork and its private layers."""
         try:
@@ -632,4 +670,16 @@ class WaypointBuildManager(WaypointAttachManager):
 
     @property
     def work_dir(self) -> str:
+        """The session's canonical overlay mountpoint.
+
+        **Not a host-side file transfer target.** Every fork — ``main``
+        included — re-mounts its own private overlay at this same path inside
+        its own mount namespace, with propagation disabled, so on the host this
+        directory is empty. Copying into it succeeds (``cp`` returns 0) while no
+        sandbox can see the result, and reading from it finds nothing. Use
+        :meth:`copy_in` / :meth:`copy_out` (or the ``*_branch`` variants) to move
+        files between the host and a fork.
+
+        Kept for diagnostics and for locating the session's checkpoint store.
+        """
         return self._work_dir

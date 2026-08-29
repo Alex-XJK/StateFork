@@ -502,6 +502,105 @@ class EnvironmentManager(ABC):
         logger.warning("_core_exec not implemented in %s backend.", self.backend_name)
         return -1, "", "Not implemented."
 
+    # ------------------------------------------------------------------
+    # File transfer
+    # ------------------------------------------------------------------
+
+    def copy_in(self, host_src: str, path: str) -> bool:
+        """Copy a host file or directory into the current branch.
+
+        ``path`` is the destination inside the environment. Returns True on
+        success; failures are logged and reported as False, matching
+        ``restore`` / ``discard_branch`` rather than raising.
+
+        Note: a copy mutates the environment's filesystem *outside* the command
+        log, so it cannot be reproduced by virtual-snapshot replay. Backends
+        that support copying should therefore be driven with physical snapshots
+        (``ForkableEnvironmentManager`` already requires ``AlwaysTrueDecider``).
+        """
+        with self._current_branch_lock:
+            return self._copy_branch(
+                self._get_current_branch_id(), host_src, path, into=True
+            )
+
+    def copy_out(self, path: str, host_dst: str) -> bool:
+        """Copy a file or directory out of the current branch onto the host.
+
+        ``path`` is the source inside the environment. Returns True on success.
+        """
+        with self._current_branch_lock:
+            return self._copy_branch(
+                self._get_current_branch_id(), host_dst, path, into=False
+            )
+
+    def _copy_branch(
+        self,
+        branch_id: str,
+        host_path: str,
+        env_path: str,
+        *,
+        into: bool,
+    ) -> bool:
+        """Template for a copy on a named branch: validate, serialize, record.
+
+        Holds the branch's ``operation_lock`` so a copy cannot interleave with
+        an exec or a snapshot on the same branch, mirroring ``_exec_branch``.
+        The copy is deliberately **not** appended to ``command_log``: it is not
+        a replayable command.
+        """
+        state = self._get_branch_state(branch_id)
+        with state.operation_lock:
+            with self._state_lock:
+                if not state.active:
+                    logger.error("Branch %s is no longer active.", branch_id)
+                    return False
+                target_snapshot = state.current_snapshot_id or "<none>"
+
+            direction = "in" if into else "out"
+            start = time.time()
+            try:
+                ok, detail = self._core_copy(
+                    branch_id=branch_id,
+                    host_path=host_path,
+                    env_path=env_path,
+                    into=into,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Copy %s failed on branch %s: %s", direction, branch_id, exc
+                )
+                return False
+            elapsed = time.time() - start
+            self._stats.add_entry(
+                "copy", target_snapshot, elapsed, branch_id=branch_id
+            )
+            if not ok:
+                logger.error(
+                    "Copy %s failed on branch %s: %s", direction, branch_id, detail
+                )
+                return False
+            logger.info(
+                "Copy %s finished on branch %s in %.4fs", direction, branch_id, elapsed
+            )
+            return True
+
+    def _core_copy(
+        self,
+        branch_id: str,
+        host_path: str,
+        env_path: str,
+        into: bool,
+    ) -> tuple[bool, str]:
+        """Backend hook: move one file/directory between host and environment.
+
+        ``into`` selects the direction: True copies ``host_path`` -> ``env_path``
+        inside the branch, False copies ``env_path`` -> ``host_path`` on the
+        host. Return ``(True, "")`` on success, or ``(False, detail)`` with a
+        human-readable reason.
+        """
+        logger.warning("_core_copy not implemented in %s backend.", self.backend_name)
+        return False, "Not implemented."
+
     def list_snapshots(self) -> List[str]:
         with self._state_lock:
             return list(self.snapshots.keys())

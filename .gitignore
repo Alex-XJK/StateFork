@@ -203,4 +203,4 @@ cython_debug/
 /bash_init
 
 # Local environment overrides — copy from env.sample.sh, never committed.
-/env.local.sh
+/env.local.sh.venv/
