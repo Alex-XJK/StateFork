@@ -7,6 +7,9 @@ from controller.base_env_manager import EnvironmentManager
 from controller.container_env_manager import ContainerBuildManager
 from controller.forkable_env_manager import ForkableEnvironmentManager
 from controller.waypoint_env_manager import WaypointAttachManager, WaypointFork
+import os
+import types
+from unittest import mock
 
 
 class ManagerArchitectureTests(unittest.TestCase):
@@ -52,3 +55,42 @@ class ManagerArchitectureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WaypointCopyPathTests(unittest.TestCase):
+    """A relative host path must not be resolved inside the StateFork checkout.
+
+    `_run_waypoint` runs the binary with cwd=STATEFORK_ROOT, so a caller's
+    relative path (a job directory, say) would land there instead of where the
+    caller meant -- and the copy would still report success, which is the worst
+    shape for a bug like this.
+    """
+
+    def test_relative_host_path_is_absolutized_against_the_callers_cwd(self):
+        from controller.waypoint_env_manager import WaypointAttachManager
+
+        manager = WaypointAttachManager.__new__(WaypointAttachManager)
+        manager.session_id = "sess"
+
+        seen = {}
+
+        def fake_run(args, **kwargs):
+            seen["args"] = args
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with mock.patch(
+            "controller.waypoint_env_manager._run_waypoint", side_effect=fake_run
+        ):
+            ok, detail = manager._core_copy(
+                branch_id="main",
+                host_path="jobs/run1/verifier",
+                env_path="/logs/verifier",
+                into=False,
+            )
+
+        self.assertTrue(ok, detail)
+        host_arg = seen["args"][-1]
+        self.assertTrue(
+            os.path.isabs(host_arg), f"host path was left relative: {host_arg}"
+        )
+        self.assertEqual(host_arg, os.path.abspath("jobs/run1/verifier"))

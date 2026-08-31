@@ -115,6 +115,30 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
         except KeyError:
             return -1, "", f"Branch {branch_id} is no longer registered."
 
+    def copy_in_branch(self, branch_id: str, host_src: str, path: str) -> bool:
+        """Copy a host file or directory into a named live branch."""
+        with self._state_lock:
+            if branch_id not in self._live_branches:
+                logger.error("Branch %s not found.", branch_id)
+                return False
+        try:
+            return self._copy_branch(branch_id, host_src, path, into=True)
+        except KeyError:
+            logger.error("Branch %s is no longer registered.", branch_id)
+            return False
+
+    def copy_out_branch(self, branch_id: str, path: str, host_dst: str) -> bool:
+        """Copy a file or directory out of a named live branch onto the host."""
+        with self._state_lock:
+            if branch_id not in self._live_branches:
+                logger.error("Branch %s not found.", branch_id)
+                return False
+        try:
+            return self._copy_branch(branch_id, host_dst, path, into=False)
+        except KeyError:
+            logger.error("Branch %s is no longer registered.", branch_id)
+            return False
+
     def fork(
         self,
         snapshot_id: str,
