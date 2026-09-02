@@ -100,10 +100,10 @@ class ContainerAttachManager(EnvironmentManager):
         self.extra_args = extra_args or []
         self.image_prefix, _ = base_image.split(":", 1)
         self.logger.info(f"Recognized base image prefix: {self.image_prefix}")
-        self.snapshots["base"] = base_image
+        self._register_snapshot_resource("base", base_image)
 
         # Init the Tree Graph
-        self.snapshot_graph["base"] = SnapshotNode(snapshot_id="base", parent_id=None)
+        self._record_snapshot_node(SnapshotNode(snapshot_id="base", parent_id=None))
         self.current_snapshot_id = "base"
         self.last_snapshot_id = "base"
 
@@ -112,7 +112,7 @@ class ContainerAttachManager(EnvironmentManager):
         self._stats.attach_size_calculator(ic)
 
 
-    def _core_snapshot(self) -> tuple[Optional[str], float]:
+    def _core_snapshot(self, branch_id: str) -> tuple[Optional[str], float]:
         snapshot_id = str(uuid.uuid4())[:8]
         image_name = f"{self.image_prefix}:{snapshot_id}"
 
@@ -120,15 +120,15 @@ class ContainerAttachManager(EnvironmentManager):
         subprocess.run([self.BACKEND_CMD, "commit", self.container_name, image_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         elapsed = time.time() - start
 
-        self.snapshots[snapshot_id] = image_name
+        self._register_snapshot_resource(snapshot_id, image_name)
 
         return snapshot_id, elapsed
 
-    def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
-        image_name = self.snapshots.get(snapshot_id)
+    def _core_restore(self, snapshot_id: str, branch_id: str) -> tuple[bool, float]:
+        image_name = self._snapshot_resource(snapshot_id)
         if not image_name:
             self.logger.warning(f"Snapshot ID {snapshot_id} not found.")
-            return None, 0.0
+            return False, 0.0
 
         # Stop & remove existing container if running
         subprocess.run([self.BACKEND_CMD, "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -140,18 +140,17 @@ class ContainerAttachManager(EnvironmentManager):
         subprocess.run(cmd, stdout=subprocess.DEVNULL, check=True)
         elapsed = time.time() - start
 
-        return self.container_name, elapsed
+        return True, elapsed
 
     def _core_cleanup(self):
         self.logger.info(f"Cleaning up {self.BACKEND_NAME} container '{self.container_name}'")
         subprocess.run([self.BACKEND_CMD, "rm", "-f", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.logger.info(f"Cleaning up {self.BACKEND_NAME} images...")
-        for snapshot_id in list(self.snapshots.keys()):
-            image_name = self.snapshots[snapshot_id]
+        for snapshot_id, image_name in self._snapshot_items():
             subprocess.run([self.BACKEND_CMD, "rmi", image_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            del self.snapshots[snapshot_id]
+            self._remove_snapshot_resource(snapshot_id)
 
-    def _core_exec(self, command, timeout=None):
+    def _core_exec(self, command, timeout=None, branch_id: str = "main"):
         if isinstance(command, list):
             cmd = [self.BACKEND_CMD, "exec", self.container_name] + command
         else:
@@ -200,6 +199,6 @@ class ContainerBuildManager(ContainerAttachManager):
         super().__init__(backend=backend, container_name="statefork_active", base_image=base_image, extra_args=extra_args, decider=decider)
 
         logger.info("Creating initial environment from base image...")
-        res, _ = self._core_create_env("base")
-        if res is None:
+        restored, _ = self._core_restore("base", self._get_current_branch_id())
+        if not restored:
             raise RuntimeError("Failed to create initial environment from base image.")

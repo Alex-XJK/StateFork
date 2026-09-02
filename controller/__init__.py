@@ -1,8 +1,9 @@
 from .base_env_manager import EnvironmentManager
+from .forkable_env_manager import EnvironmentBranch, ForkableEnvironmentManager
 from .container_env_manager import ContainerAttachManager, ContainerBuildManager
 from .criu_env_manager import CRIUAttachManager, CRIUBuildManager
 from .hybrid_env_manager import HybridAttachManager, HybridBuildManager
-from .waypoint_env_manager import WaypointAttachManager, WaypointBuildManager
+from .waypoint_env_manager import WaypointAttachManager, WaypointBuildManager, WaypointFork
 from .gvisor_env_manager import GvisorBuildManager, GvisorAttachManager
 from .firecracker_env_manager import FireBuildManager, FireAttachManager
 from .benchmark import BenchmarkStats, BenchmarkResult, Statistics
@@ -93,7 +94,7 @@ def create_env_manager(method: EnvType, **kwargs) -> EnvironmentManager:
     elif method in ("waypoint_attach", "ckpt_attach"):
         return WaypointAttachManager(
             session_id=kwargs["session_id"],
-            target_pid=kwargs.get("target_pid", -2),
+            target_pid=kwargs.get("target_pid"),  # obsolete in the fork model; ignored
             decider=kwargs.get("decider")
         )
     elif method == "gvisor_build":
