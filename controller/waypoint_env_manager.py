@@ -24,18 +24,24 @@ STATEFORK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 def _resolve_bin(name: str, env_var: str) -> str:
     """Locate a Waypoint helper binary.
 
-    Resolution order: an explicit ``env_var`` override, then a binary of the
-    same name found on ``PATH``, then a repo-local fallback at
-    ``STATEFORK_ROOT/<name>`` (typically a developer-created symlink). The path
-    is returned even if it does not exist; executability is validated lazily in
-    ``_run_waypoint`` so that importing this module never requires Waypoint to
-    be installed (other backends must stay usable without it).
+    Resolution order: an explicit ``env_var`` override, then the repo-local
+    ``STATEFORK_ROOT/<name>`` (typically a symlink into the Waypoint build this
+    checkout was developed against), then a binary of the same name on
+    ``PATH``. The checkout comes before PATH on purpose: a checkout and the
+    binary beside it are versioned together, while whatever sits on PATH is
+    not, and a stale system-wide ``waypoint`` used to win silently over the
+    one the checkout pointed at. The path is returned even if it does not
+    exist; executability is validated lazily in ``_run_waypoint`` so that
+    importing this module never requires Waypoint to be installed (other
+    backends must stay usable without it).
     """
-    return (
-        os.environ.get(env_var)
-        or shutil.which(name)
-        or os.path.join(STATEFORK_ROOT, name)
-    )
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    local = os.path.join(STATEFORK_ROOT, name)
+    if os.path.isfile(local) and os.access(local, os.X_OK):
+        return local
+    return shutil.which(name) or local
 
 
 WAYPOINT_BIN = _resolve_bin("waypoint", "WAYPOINT_BIN")
