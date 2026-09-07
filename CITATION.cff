@@ -5,14 +5,14 @@ type: software
 authors:
   - family-names: Xu
     given-names: Jiakai
-  - family-names: Zhou
-    given-names: Tianle
   - family-names: Fu
     given-names: Ruizhe
   - family-names: Gillai
     given-names: Danielle
   - family-names: Ge
     given-names: Tiancheng
+  - family-names: Zhou
+    given-names: Tianle
   - family-names: Wu
     given-names: Eugene
   - family-names: Kaffes
@@ -22,14 +22,15 @@ identifiers:
     value: 10.48550/arXiv.2510.05556
 repository-code: 'https://github.com/Alex-XJK/StateFork'
 abstract: >-
-  StateFork provides structured environment snapshoting and
-  restoration capabilities for agentic exploration. It supports
-  multiple snapshotting methods, including Docker, Podman, and
+  StateFork provides structured environment snapshotting,
+  restoration, and concurrent forking capabilities for agentic
+  exploration. It supports multiple snapshotting backends,
+  including Docker, Podman, CRIU, gVisor, Firecracker, and
   Waypoint, enabling flexible and efficient state management
   for agents.
 license: Apache-2.0
-version: 0.6.0
-date-released: '2026-07-01'
+version: 0.7.0
+date-released: '2026-09-07'
 references:
   - type: article
     title: "Toward Systems Foundations for Agentic Exploration"
