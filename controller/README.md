@@ -32,6 +32,7 @@ They are:
 - `.restore(snapshot_id: str)`: Restore the environment to a specific snapshot and returns True if successful.
 - `.cleanup()`: Clean up all containers and snapshots created by the controller instance.
 - `.exec_command(command)`: Execute a command in the managed environment. Commands are logged for virtual snapshot replay, and their elapsed time accumulates for decider policies.
+- `.copy_in(host_src, path)` / `.copy_out(path, host_dst)`: Copy a file or directory between the host and the environment (Waypoint `cp`). Relative host paths resolve against the caller's working directory. A copy is **not** a replayable command, so backends that support it should be driven with physical snapshots.
 
 `create_env_from_snapshot()` was removed from the common contract. Creating a new process or container is a backend
 implementation detail of `restore()`; creating an additional independently live environment is the separate `fork()`
@@ -83,8 +84,10 @@ so clients can depend on `ForkableEnvironmentManager` rather than detecting a co
   (`snapshot()`, or `park` for a lossless retire) to keep it; `main` stays live instead. Materialization
   happens before destruction, so a failed restore leaves the current environment untouched.
 - `.exec_command(cmd)` runs in the current fork; `.exec_on_branch(f, cmd)` runs in fork `f`. Both feed
-  branch-aware benchmark and command bookkeeping. Commands on **different forks**
-  run concurrently**; commands on the same fork serialize.
+  branch-aware benchmark and command bookkeeping. Commands on **different forks run concurrently**;
+  commands on the same fork serialize. A bare `exit` ends the fork's shell: Waypoint then reports the fork as
+  `failed`, later commands and snapshots on it fail cleanly, and `discard_branch()` still removes it.
+- `.copy_in_branch(f, host_src, path)` / `.copy_out_branch(f, path, host_dst)` transfer files with a named fork.
 - `.fork(snapshot_id, n=1, ids=None)` is the **only bare materialization verb**: `n` live forks of a
   physical snapshot, returning backend-neutral `EnvironmentBranch` records. Waypoint enriches these as
   `WaypointFork(id, pid, socket, base_checkpoint, ...)` handles.
@@ -95,13 +98,19 @@ so clients can depend on `ForkableEnvironmentManager` rather than detecting a co
   automatically when a manager attaches, so **`waypoint_attach` to an existing session inherits its full
   history** (parent links included) instead of starting from a blank tree.
 - Forkable managers currently accept physical snapshots only and reject non-`AlwaysTrueDecider` policies at construction.
+- A `WaypointAttachManager` shares the session with whoever created it: its `cleanup()` tears that session down for
+  everyone, so only the owner of a session should call it.
+- `scripts/search_workflow_demo.py` runs the whole sequence end to end (build → prepare → fork N → score → seal the
+  winner → next generation → backtrack → export → cleanup) and asserts each of these contracts; it doubles as the
+  integration test for the Waypoint backend and requires root plus Waypoint v0.7.0+.
 
 ### 🧪 Benchmark
 You can enter the benchmark interface through the `.stats` attribute of any `EnvironmentManager` subclass instance.
 
 #### Programmatic Usage
 Use the `get_all_statistics()` method to retrieve all statistics, which returns a `BenchmarkResult` object containing 
-the time and size statistics for various operations. A sample output is shown below:
+the time and size statistics for various operations. Every entry also records the branch it ran on; forkable managers
+add `fork`, `park`, and `copy` operations next to `snapshot`, `restore`, and `exec`. A sample output is shown below:
 ```python
 BenchmarkResult(
     time={

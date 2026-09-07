@@ -11,14 +11,18 @@ Currently supported methods:
 - `podman` - for Podman-based environments focused on filesystem snapshots
 - `criu` - for CRIU-based environments focused on process state snapshots
 - `hybrid` - for Podman+CRIU environments combining filesystem and process state snapshots
-- `waypoint` - for Waypoint environments
+- `waypoint` - for Waypoint environments (Waypoint v0.7.0+, root required); builds the `Dockerfile` in the current directory into a new session
 - `ckpt` - legacy alias for `waypoint`
+- `gvisor` - for Docker with the gVisor runtime
+- `firecracker` - for Firecracker microVM environments
 
 ### 2. Inside the Interactive Shell
 After launching the shell with the desired method, you will see a prompt similar to this:
 ```
 StateFork Container Manager - Interactive Shell
-Commands: snapshot, restore <id>, tree, stats, history, storage, exit
+Using WaypointBuildManager with Waypoint backend
+
+Available commands: snapshot [fork] [--park], restore <id>, cmd <command>, fork <id> [n], forks, fexec <fork> <cmd>, destroy <fork>, tree, stats, history, storage, exit, set
 
 StateFork > _
 ```
@@ -40,6 +44,7 @@ See the sample run screenshot below.
 | stats	        | Show benchmarking results                                |
 | history	      | Show operation history                                   |
 | storage	      | Show storage usage and details                           |
+| set cmd on/off | Toggle the unknown-command heading; with it off, unrecognized input is executed as a command in the current environment |
 | exit	         | Clean up and exit the manager                            |
 
 ### 📸 Sample Run
