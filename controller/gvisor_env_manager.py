@@ -52,19 +52,19 @@ class GvisorAttachManager(EnvironmentManager):
         self.extra_args = extra_args or []
         self.base_image = base_image
 
-        sid, _ = self._core_snapshot()
+        sid, _ = self._core_snapshot(self._get_current_branch_id())
         if sid is None:
             raise RuntimeError("Failed to create initial snapshot.")
 
         # Init the Tree Graph
-        self.snapshot_graph[sid] = SnapshotNode(snapshot_id=sid, parent_id=None)
+        self._record_snapshot_node(SnapshotNode(snapshot_id=sid, parent_id=None))
         self.current_snapshot_id = sid
         self.last_snapshot_id = sid
 
         gc = GvisorCalculator(self.container_name)
         self._stats.attach_size_calculator(gc)
 
-    def _core_snapshot(self) -> tuple[Optional[str], float]:
+    def _core_snapshot(self, branch_id: str) -> tuple[Optional[str], float]:
         snapshot_id = str(uuid.uuid4())[:8]
 
         start = time.time()
@@ -76,18 +76,18 @@ class GvisorAttachManager(EnvironmentManager):
                 stderr=subprocess.DEVNULL
             )
             elapsed = time.time() - start
-            self.snapshots[snapshot_id] = snapshot_id
+            self._register_snapshot_resource(snapshot_id, snapshot_id)
             self.current_snapshot_id = snapshot_id
             return snapshot_id, elapsed
         except subprocess.CalledProcessError as e:
             logger.error(f"gVisor snapshot failed: {e}")
             return None, 0.0
 
-    def _core_create_env(self, snapshot_id: str) -> tuple[Optional[str], float]:
-        snapshot_id = self.snapshots.get(snapshot_id)
+    def _core_restore(self, snapshot_id: str, branch_id: str) -> tuple[bool, float]:
+        snapshot_id = self._snapshot_resource(snapshot_id)
         if not snapshot_id:
             logger.warning(f"Snapshot {snapshot_id} not found.")
-            return None, 0.0
+            return False, 0.0
 
         # Stop container if running
         subprocess.run(["docker", "stop", self.container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -101,10 +101,10 @@ class GvisorAttachManager(EnvironmentManager):
             subprocess.run(cmd, stdout=subprocess.DEVNULL, check=True)
             elapsed = time.time() - start
 
-            return self.container_name, elapsed
+            return True, elapsed
         except subprocess.CalledProcessError as e:
             logger.error(f"gVisor restore failed: {e}")
-            return None, 0.0
+            return False, 0.0
 
     def _core_cleanup(self):
         logger.info(f"Cleaning up gVisor docker container '{self.container_name}'")
@@ -117,7 +117,7 @@ class GvisorAttachManager(EnvironmentManager):
             logger.error(f"gVisor cleanup failed: {e}")
             return
 
-    def _core_exec(self, command, timeout=None):
+    def _core_exec(self, command, timeout=None, branch_id: str = "main"):
         if isinstance(command, list):
             cmd = ["docker", "exec", self.container_name] + command
         else:

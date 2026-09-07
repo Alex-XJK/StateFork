@@ -2,6 +2,7 @@ import logging
 import os
 import statistics
 import subprocess
+import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -150,33 +151,56 @@ class BenchmarkEntry:
     operation: str
     target_id: str
     elapsed_time: float
+    branch_id: str = "main"
 
 @dataclass
 class BenchmarkStats:
     sequence_counter: int = 0
     log: List[BenchmarkEntry] = field(default_factory=list)
     size_calculators: List[Calculator] = field(default_factory=list)
+    # Branch operations may record results concurrently.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def add_entry(self, operation: str, target_id: str, elapsed_time: float) -> None:
+    def add_entry(
+        self,
+        operation: str,
+        target_id: str,
+        elapsed_time: float,
+        branch_id: str = "main",
+    ) -> None:
         """
-        Add a new benchmark entry to the log.
+        Add a new benchmark entry to the log. Thread-safe.
         """
-        self.sequence_counter += 1
-        self.log.append(BenchmarkEntry(self.sequence_counter, operation, target_id, elapsed_time))
+        with self._lock:
+            self.sequence_counter += 1
+            self.log.append(
+                BenchmarkEntry(
+                    self.sequence_counter,
+                    operation,
+                    target_id,
+                    elapsed_time,
+                    branch_id,
+                )
+            )
 
     def attach_size_calculator(self, cal: Calculator) -> None:
         """
         Attach a size calculator to the benchmark _stats.
         """
-        self.size_calculators.append(cal)
+        with self._lock:
+            self.size_calculators.append(cal)
 
     def print_stats(self) -> str:
         """
         Returns a formatted string of the benchmark statistics.
         """
+        with self._lock:
+            log = list(self.log)
+            size_calculators = list(self.size_calculators)
+
         stats = defaultdict(list)
         result = ""
-        for entry in self.log:
+        for entry in log:
             stats[entry.operation].append(entry.elapsed_time)
         for op, times in stats.items():
             mean = statistics.mean(times)
@@ -184,7 +208,7 @@ class BenchmarkStats:
             min_time = min(times)
             max_time = max(times)
             result += f"[{op.upper():<10}] mean={mean:.6f}s median={median:.6f}s min={min_time:.6f}s max={max_time:.6f}s\n"
-        for sc in self.size_calculators:
+        for sc in size_calculators:
             result += sc.summary()
         return result
 
@@ -192,17 +216,27 @@ class BenchmarkStats:
         """
         Returns a formatted string of the benchmark history.
         """
+        with self._lock:
+            log = list(self.log)
+
         result = ""
-        for entry in self.log:
-            result += f"#{entry.sequence:<4d} [{entry.operation.upper():<10}] -> {entry.target_id:<8} took {entry.elapsed_time:.6f}s\n"
+        for entry in log:
+            result += (
+                f"#{entry.sequence:<4d} [{entry.operation.upper():<10}] "
+                f"[{entry.branch_id}] -> {entry.target_id:<8} "
+                f"took {entry.elapsed_time:.6f}s\n"
+            )
         return result
 
     def print_size_details(self) -> str:
         """
         Returns a formatted string of size details from all attached calculators.
         """
+        with self._lock:
+            size_calculators = list(self.size_calculators)
+
         result = ""
-        for sc in self.size_calculators:
+        for sc in size_calculators:
             result += sc.details() + "\n"
         return result.strip() if result else "No size details available."
 
@@ -211,8 +245,12 @@ class BenchmarkStats:
         Collects all statistics from the benchmark log and size calculators.
         :return: BenchmarkResult containing lists of time and size statistics.
         """
+        with self._lock:
+            log = list(self.log)
+            size_calculators = list(self.size_calculators)
+
         op_stats = defaultdict(list)
-        for entry in self.log:
+        for entry in log:
             op_stats[entry.operation].append(entry.elapsed_time)
 
         time_data = {}
@@ -228,7 +266,7 @@ class BenchmarkStats:
             )
 
         size_data = {}
-        for sc in self.size_calculators:
+        for sc in size_calculators:
             size_data[sc.label] = sc.statistics()
 
         return BenchmarkResult(time=time_data, size=size_data)

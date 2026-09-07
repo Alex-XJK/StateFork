@@ -9,6 +9,8 @@ enabling users to take snapshots, roll back state, and benchmark key operations 
 - 🌱 Take and manage snapshots of running apps
 - 🔀 **Physical or virtual snapshots** via a pluggable decider policy (see [Smart Decider](#-smart-decider))
 - 🔁 Restore to previous snapshots instantly
+- 🍴 **Concurrent live forks** (Waypoint backend): materialize N isolated running copies of one snapshot and drive them in parallel
+- 📦 Copy files into and out of a live environment (`copy_in` / `copy_out`)
 - 🧪 Benchmark time and storage performance of snapshot/restore operations
 - 🧩 Works with unmodified apps (FastAPI, Python/C++ scripts, etc.)
 - ⚙️ CLI-based interactive interface
@@ -27,10 +29,12 @@ StateFork/
   │   ├── __init__.py
   │   ├── README.md
   │   ├── base_env_manager.py
+  │   ├── forkable_env_manager.py
   │   ├── benchmark.py
   │   ├── criu_env_manager.py
   │   ├── container_env_manager.py
   │   ├── hybrid_env_manager.py
+  │   ├── waypoint_env_manager.py   # fork-based Waypoint backend (ForkableEnvironmentManager)
   │   └── ...
   ├── decider/               # Snapshot decision policies (physical vs virtual)
   │   ├── __init__.py
@@ -40,6 +44,9 @@ StateFork/
   │   └── shell.py
   ├── logs/                  # Benchmark and package analysis files
   ├── scripts/               # Testing and utility scripts
+  │   ├── search_workflow_demo.py   # end-to-end fork workflow demo/test (Waypoint)
+  │   └── ...
+  ├── tests/                 # Unit tests: python -m unittest discover -s tests
   └── requirements.txt
 ```
 
@@ -51,7 +58,7 @@ They follow the naming convention `{Backend}{Action}Manager`, where:
   - `Container` for Docker/Podman (manages file system state only)
   - `CRIU` for process-level CRIU checkpointing
   - `Hybrid` for Podman + CRIU (captures both file and process states) 
-  - `Waypoint` for Waypoint, a lightweight checkpointing tool (captures both file and process states)
+  - `Waypoint` for Waypoint, a lightweight checkpointing tool (captures both file and process states; concurrent live forks with Waypoint v0.7.0+)
   - `Gvisor` for Docker in gVisor (captures both file and process states)
   - `Fire` for Firecracker microVM (captures process states)
 - **{Action}** Lifecycle mode:
@@ -85,7 +92,7 @@ See the full method table below for supported types and arguments.
 | `hybrid_build`    | HybridBuildManager          | Podman + CRIU   |                                          | `container_name(str)`, `dockerfile_dir(str)`, `export_dir(str)`, `extra_args(List[str])` |
 | `hybrid_attach`   | HybridAttachManager         | Podman + CRIU   | `container_name(str)`                    | `export_dir(str)`                                                                        |
 | `waypoint_build`  | WaypointBuildManager        | Waypoint        |                                          | `dockerfile_dir(str)`, `build(bool)`                                                    |
-| `waypoint_attach` | WaypointAttachManager       | Waypoint        | `target_pid(int)`, `session_id(str)`     |                                                                                          |
+| `waypoint_attach` | WaypointAttachManager       | Waypoint        | `session_id(str)`                        | `target_pid(int)` *(obsolete; ignored)*                                                  |
 | `gvisor_build`    | GvisorBuildManager          | gVisor + Docker |                                          | `dockerfile_dir(str)`, `base_image(str)`, `extra_args(List[str])`                        |
 | `gvisor_attach`   | GvisorAttachManager         | gVisor + Docker | `container_name(str)`, `base_image(str)` | `extra_args(List[str])`                                                                  |
 |`firecracker_build`| FireBuildManager            | Firecracker     |                                          | `fire_parent_dir(str)`, `inject_dir(str)`                                                |
@@ -98,7 +105,7 @@ When `snapshot()` is called, StateFork can create either a **physical** or **vir
 - **Physical snapshot** — invokes the backend’s full checkpoint path (e.g., container commit, CRIU dump, or Waypoint capture). Restore reloads that state in one step.
 - **Virtual snapshot** — records only the commands executed since the last snapshot, without calling the backend checkpoint. Restore walks up to the nearest physical ancestor, restores it, then replays the stored commands in order.
 
-This lets callers trade capture cost and storage against restore-time replay. The choice is made by a **`Decider`** strategy passed into any `EnvironmentManager` (default: always physical). Built-in policies live in `decider/`; the interactive shell selects them with `--decider`.
+This lets callers trade capture cost and storage against restore-time replay. The choice is made by a **`Decider`** strategy passed into a sequential `EnvironmentManager` (default: always physical). Built-in policies live in `decider/`; the interactive shell selects them with `--decider`. The initial `ForkableEnvironmentManager` capability requires `AlwaysTrueDecider` while concurrent virtual-snapshot policy remains undefined.
 
 See `controller/README.md` for snapshot/restore behavior and all built-in deciders.
 
@@ -143,8 +150,28 @@ pip install -r requirements.txt
 
 ### Waypoint Method (CRIU + OverlayFS)
 - Waypoint must be installed from: [github.com/Alex-XJK/waypoint](https://github.com/Alex-XJK/waypoint)
-- Make the `waypoint` binary discoverable in one of three ways: set the `WAYPOINT_BIN` environment variable to its full path, place it on your `PATH`, or symlink it into the repository root (e.g. `ln -s /path/to/waypoint ./waypoint`). The binary is intentionally not committed. Other Waypoint runtime settings, such as `bash_init`, session storage, and cleanup behavior, are resolved by Waypoint using its own environment/config/default precedence.
-- Root or `sudo` privileges are required.
+- **Waypoint v0.7.0 or newer is required** (the concurrent-fork model with `checkpoint` / `fork` / `snapshot [--park]` / `exec <fork> --` / `cp` commands). StateFork probes the binary at startup and refuses older `create`/`restore`-style builds with a clear error. Generic `snapshot()`, `exec_command()`, `copy_in()` and `copy_out()` operate on the current branch, while the stronger `ForkableEnvironmentManager` capability exposes `fork()`, `snapshot_branch()`, `exec_on_branch()`, `copy_in_branch()` / `copy_out_branch()`, `park_branch()`, `discard_branch()`, and `list_branches()`. `restore(id)` moves the current branch after materializing the target and discards the departing non-`main` branch. See `controller/README.md` for the capability contract.
+- Make the `waypoint` binary discoverable in one of three ways, tried in this order: the `WAYPOINT_BIN` environment variable (full path), a symlink in the repository root (e.g. `ln -s /path/to/waypoint ./waypoint`), then a `waypoint` on your `PATH`. The binary is intentionally not committed. Other Waypoint runtime settings, such as `bash_init`, session storage, and cleanup behavior, are resolved by Waypoint using its own environment/config/default precedence.
+- Root privileges are required: run StateFork itself as root (e.g. `sudo -i` first); prefixing the Waypoint calls with `sudo` from a non-root process is not supported, because a timed-out `exec` cannot be cancelled through `sudo`.
+- Quick start (interactive shell, and the end-to-end fork workflow demo/test):
+```bash
+sudo -E .venv/bin/python -m interface.shell --method waypoint                        # builds ./Dockerfile into a session
+sudo -E .venv/bin/python scripts/search_workflow_demo.py --fanout 4 --generations 3   # build -> prepare -> fork -> score -> seal -> ...
+```
+```python
+from controller import create_env_manager
+
+m = create_env_manager("waypoint_build", dockerfile_dir=".")   # one session built from ./Dockerfile
+m.exec_command("cd /app && export MODE=fast")                   # state lives in main's persistent shell
+base = m.snapshot()                                             # seal main (it resumes on a fresh layer)
+forks = m.fork(base, n=3)                                       # three live, isolated copies of `base`
+for f in forks:
+    m.exec_on_branch(f.id, "./run.sh $MODE")                    # different forks run concurrently
+best = m.snapshot_branch(forks[0].id)                           # seal one fork as a new checkpoint
+m.copy_out_branch(forks[0].id, "/app/result.txt", "./result.txt")
+m.restore(base)                                                 # move the current branch back to `base`
+m.cleanup()
+```
 
 #### Environment variables (optional)
 

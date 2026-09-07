@@ -11,7 +11,7 @@
 
 # --- Waypoint backend ---
 
-# Path to the `waypoint` binary. Unset -> looked up on $PATH, then ./waypoint.
+# Path to the `waypoint` binary. Unset -> ./waypoint symlink in the repo root, then $PATH.
 # export WAYPOINT_BIN=/abs/path/to/waypoint
 
 # Path to the `bash_init` helper. Unset -> Waypoint config/default.
