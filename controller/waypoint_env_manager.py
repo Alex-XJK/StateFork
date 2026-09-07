@@ -170,6 +170,10 @@ class WaypointCalculator(Calculator):
 
     We have to override but not extend the FileSizeCalculator because we need to
     target the per-checkpoint subdirectory structure of the fork-based Waypoint.
+
+    With Waypoint's ``tmpfs_images`` option, ``checkpoints/<id>/criu`` is a
+    symlink (to a tmpfs directory while the image is being flushed, then to
+    ``criu.disk``); the size is measured through that link, not of the link.
     """
     def __init__(self, root_dir: str, sub_dir: str, name: str = "WaypointFsCalculator"):
         super().__init__(name=name)
@@ -190,8 +194,13 @@ class WaypointCalculator(Calculator):
         return items
 
     def __get_size(self, path: str) -> int:
+        # ``--dereference-args`` follows only the path given on the command line
+        # (the tmpfs_images ``criu`` symlink); symlinks *inside* a layer are
+        # still counted as links, exactly as a real directory is measured today.
         try:
-            output = subprocess.check_output(["du", "-sb", path], text=True)
+            output = subprocess.check_output(
+                ["du", "-sb", "--dereference-args", path], text=True
+            )
             return int(output.split()[0])
         except Exception as e:
             self.logger.error(f"Error getting size for {path}: {e}")
