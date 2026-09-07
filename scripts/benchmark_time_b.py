@@ -36,7 +36,7 @@ def test_time_b(env: EnvironmentManager) -> float:
 
         print(f"[Round {i+1}] Snapshot and stepping...")
         sid = env.snapshot()
-        _ = env.create_env_from_snapshot(sid)
+        _ = env.restore(sid)
         print(f"[Round {i+1}] ... Stepping successful")
 
         print(f"[Round {i+1}] Waiting for recovery...")

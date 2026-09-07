@@ -1,15 +1,19 @@
 import argparse
 import logging
+import sys
 
-from controller import create_env_manager
+from controller import ForkableEnvironmentManager, create_env_manager
 from decider import RandomDecider, AlwaysTrueDecider, AlwaysFalseDecider, ThresholdDecider
 
 
 AVAILABLE_COMMANDS = [
-    "snapshot",
+    "snapshot [fork] [--park]",
     "restore <id>",
-    "step",
     "cmd <command>",
+    "fork <id> [n]",
+    "forks",
+    "fexec <fork> <cmd>",
+    "destroy <fork>",
     "tree",
     "stats",
     "history",
@@ -62,6 +66,13 @@ def print_welcome_message(manager):
     print("")
     print(f"Available commands: {', '.join(AVAILABLE_COMMANDS)}")
 
+def has_fork_api(manager) -> bool:
+    if isinstance(manager, ForkableEnvironmentManager):
+        return True
+    print(f"This command requires a forkable backend (current: {manager.backend}).")
+    return False
+
+
 def execute_command(manager, command_text):
     rc, out, err = manager.exec_command(command_text)
 
@@ -78,11 +89,42 @@ def interactive_shell(manager):
     need_cmd_heading = True
 
     while True:
-        cmd = input("\nStateFork > ").strip()
+        try:
+            cmd = input("\nStateFork > ").strip()
+        except EOFError:
+            # Piped/scripted input ended: treat as a clean `exit`.
+            print()
+            cmd = "exit"
 
-        if cmd == "snapshot":
-            sid = manager.snapshot()
-            print(f"Snapshot created: {sid}")
+        if cmd == "snapshot" or cmd.startswith("snapshot "):
+            tokens = cmd.split()[1:]
+            park = "--park" in tokens
+            rest = [t for t in tokens if t != "--park"]
+            if len(rest) > 1:
+                print("Usage: snapshot [fork_id] [--park]")
+                continue
+            fid = rest[0] if rest else None
+
+            if fid is not None or park:
+                # Named snapshots and parking require the forkable capability.
+                if not has_fork_api(manager):
+                    continue
+                # Parking the current fork moves the pointer, so name the
+                # target before the call.
+                target = fid or manager.current_branch_id
+                sid = manager.snapshot_branch(target, park=park)
+            else:
+                sid = manager.snapshot()
+
+            if not sid:
+                print("Park failed." if park else "Snapshot failed.")
+                continue
+            if park:
+                print(f"Fork {target} parked as snapshot {sid}")
+                if fid is None:
+                    print(f"Current branch: {manager.current_branch_id}")
+            else:
+                print(f"Snapshot created: {sid}")
 
         elif cmd.startswith("restore"):
             _, _, sid = cmd.partition(" ")
@@ -91,16 +133,9 @@ def interactive_shell(manager):
                 continue
 
             ok = manager.restore(sid)
-            print(f"Restored to snapshot {sid}" if ok else f"Snapshot {sid} not found.")
-
-        elif cmd == "step":
-            sid = manager.snapshot()
-            container = manager.create_env_from_snapshot(sid)
-            print(
-                f"Stepped to new container with snapshot {sid}"
-                if container else
-                "Failed to create new container from snapshot."
-            )
+            print(f"Restored to snapshot {sid}" if ok else f"Restore failed for {sid}.")
+            if ok and isinstance(manager, ForkableEnvironmentManager):
+                print(f"Current branch: {manager.current_branch_id}")
 
         elif cmd.startswith("cmd"):
             _, _, command_text = cmd.partition(" ")
@@ -108,6 +143,66 @@ def interactive_shell(manager):
                 print("Usage: cmd <command>")
                 continue
             execute_command(manager, command_text)
+
+        elif cmd == "forks":
+            if not has_fork_api(manager):
+                continue
+            forks = manager.list_branches()
+            if not forks:
+                print("No live forks.")
+            for f in forks:
+                marker = " (current)" if f.id == manager.current_branch_id else ""
+                print(
+                    f"- {f.id}{marker}: base={f.base_snapshot_id} "
+                    f"status={f.status}"
+                )
+
+        elif cmd.startswith("fork"):
+            if not has_fork_api(manager):
+                continue
+            parts = cmd.split()
+            if len(parts) < 2:
+                print("Usage: fork <snapshot_id> [n]")
+                continue
+            try:
+                n = int(parts[2]) if len(parts) > 2 else 1
+            except ValueError:
+                print("Usage: fork <snapshot_id> [n]")
+                continue
+            forks = manager.fork(parts[1], n=n)
+            for f in forks:
+                print(f"Forked {f.id} from {f.base_snapshot_id}")
+            if not forks:
+                print("Fork failed.")
+
+        elif cmd.startswith("fexec"):
+            if not has_fork_api(manager):
+                continue
+            _, _, rest = cmd.partition(" ")
+            fork_id, _, command_text = rest.strip().partition(" ")
+            if not fork_id or not command_text:
+                print("Usage: fexec <fork_id> <command>")
+                continue
+            rc, out, err = manager.exec_on_branch(fork_id, command_text)
+            if out.strip():
+                print("--- stdout ---")
+                print(out.strip())
+            if err.strip():
+                print("--- stderr ---")
+                print(err.strip())
+            if rc != 0:
+                print(f"(exit code {rc})")
+
+        elif cmd.startswith("destroy"):
+            if not has_fork_api(manager):
+                continue
+            _, _, fork_id = cmd.partition(" ")
+            fork_id = fork_id.strip()
+            if not fork_id:
+                print("Usage: destroy <fork_id>")
+                continue
+            ok = manager.discard_branch(fork_id)
+            print(f"Fork {fork_id} destroyed." if ok else f"Failed to destroy fork {fork_id}.")
 
         elif cmd == "tree":
             print(manager.print_snapshot_tree())
@@ -176,8 +271,26 @@ def main():
 
     args = parser.parse_args()
 
-    manager = build_manager(args.method, args.decider, args.threshold)
-    interactive_shell(manager)
+    # Process exit codes: 0 = clean shutdown (exit command or stdin EOF),
+    # 1 = unexpected crash, 2 = startup failure (argparse uses 2 as well).
+    try:
+        manager = build_manager(args.method, args.decider, args.threshold)
+    except Exception as e:
+        print(f"Failed to start environment manager: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        interactive_shell(manager)
+    except KeyboardInterrupt:
+        print("\nInterrupted; cleaning up...")
+        try:
+            manager.cleanup()
+        except Exception:
+            logging.exception("Cleanup after interrupt failed")
+        sys.exit(1)
+    except Exception:
+        logging.exception("Shell crashed")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

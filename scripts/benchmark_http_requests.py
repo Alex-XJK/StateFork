@@ -69,10 +69,10 @@ def test_all_requests(iteration: int, step_everytime: bool) -> None:
         if step_everytime:
             env_man_start_time = time.time()
             sid = env.snapshot()
-            container = env.create_env_from_snapshot(sid)
-            if container is None:
+            restored = env.restore(sid)
+            if not restored:
                 env.cleanup()
-                raise RuntimeError(f"Container creation failed after request {i+1}")
+                raise RuntimeError(f"Environment restore failed after request {i+1}")
             env_management_time += time.time() - env_man_start_time
 
             deduction_start_time = time.time()
