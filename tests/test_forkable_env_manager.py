@@ -16,8 +16,11 @@ from decider import AlwaysFalseDecider
 
 
 class MemoryForkableManager(ForkableEnvironmentManager[EnvironmentBranch]):
-    def __init__(self, decider=None) -> None:
-        super().__init__(backend_name="ForkableMemory", decider=decider)
+    def __init__(self, decider=None, **kwargs) -> None:
+        super().__init__(backend_name="ForkableMemory", decider=decider, **kwargs)
+        #: Requested ids the backend refuses, so a test can fail the
+        #: materialization of one id while a fresh one still works.
+        self.refuse_fork_ids: set[str] = set()
         self._next_snapshot = 0
         self._next_branch = 0
         self._counter_lock = threading.Lock()
@@ -70,6 +73,8 @@ class MemoryForkableManager(ForkableEnvironmentManager[EnvironmentBranch]):
 
         branches = []
         for requested_id in requested_ids:
+            if requested_id is not None and requested_id in self.refuse_fork_ids:
+                continue
             self._next_branch += 1
             branch_id = requested_id or f"branch-{self._next_branch}"
             branches.append(
@@ -271,6 +276,94 @@ class ForkableEnvironmentManagerTests(unittest.TestCase):
         self.assertEqual(manager.current_branch_id, "left")
         self.assertIn("left", [branch.id for branch in manager.live_branches])
         self.assertEqual(manager.backend_events, ["fork:root"])
+
+    def test_discard_first_restore_retires_before_it_materializes(self) -> None:
+        """The order is the whole point: the live copy must be gone first.
+
+        Materializing first is what cannot work for a state whose processes are
+        still running beside it — CRIU binds the checkpointed listening socket
+        a second time in the same netns and refuses.
+        """
+        manager = MemoryForkableManager(restore_discard_first=True)
+        manager.fork("root", ids=["left"])
+        manager._set_current_branch("left")
+        manager.backend_events.clear()
+
+        self.assertTrue(manager.restore("root"))
+
+        self.assertEqual(manager.backend_events, ["discard:left", "fork:root"])
+        # The id is freed and reused, so it survives the restore — unlike the
+        # materialize-first path, which lands on a new one.
+        self.assertEqual(manager.current_branch_id, "left")
+        self.assertIn("left", [branch.id for branch in manager.live_branches])
+        self.assertTrue(manager._get_branch_state("left").active)
+        self.assertEqual(manager.current_snapshot, "root")
+
+    def test_discard_first_restore_may_retire_the_default_branch(self) -> None:
+        """`main` is exactly the branch that holds the conflicting processes."""
+        manager = MemoryForkableManager(restore_discard_first=True)
+        manager.backend_events.clear()
+
+        self.assertTrue(manager.restore("root"))
+
+        self.assertEqual(
+            manager.backend_events,
+            [f"discard:{DEFAULT_BRANCH_ID}", "fork:root"],
+        )
+        self.assertEqual(manager.current_branch_id, DEFAULT_BRANCH_ID)
+        self.assertIn(
+            DEFAULT_BRANCH_ID, [branch.id for branch in manager.live_branches]
+        )
+
+    def test_discard_first_restore_falls_back_to_a_fresh_id(self) -> None:
+        """Losing the id is survivable; losing the session is not."""
+        manager = MemoryForkableManager(restore_discard_first=True)
+        manager.fork("root", ids=["left"])
+        manager._set_current_branch("left")
+        manager.refuse_fork_ids = {"left"}
+        manager.backend_events.clear()
+
+        self.assertTrue(manager.restore("root"))
+
+        self.assertEqual(
+            manager.backend_events, ["discard:left", "fork:root", "fork:root"]
+        )
+        self.assertNotEqual(manager.current_branch_id, "left")
+        self.assertTrue(
+            manager._get_branch_state(manager.current_branch_id).active
+        )
+
+    def test_discard_first_restore_reports_a_session_it_could_not_rebuild(
+        self,
+    ) -> None:
+        """The inverted guarantee, asserted: this one destroys before it builds."""
+        manager = MemoryForkableManager(restore_discard_first=True)
+        manager.fork("root", ids=["left"])
+        manager._set_current_branch("left")
+        manager.fail_fork = True
+        manager.backend_events.clear()
+
+        self.assertFalse(manager.restore("root"))
+
+        self.assertEqual(
+            manager.backend_events, ["discard:left", "fork:root", "fork:root"]
+        )
+        self.assertNotIn("left", [branch.id for branch in manager.live_branches])
+
+    def test_discard_first_restore_refuses_an_unknown_snapshot_without_harm(
+        self,
+    ) -> None:
+        """Validation happens while failing is still free."""
+        manager = MemoryForkableManager(restore_discard_first=True)
+        manager.fork("root", ids=["left"])
+        manager._set_current_branch("left")
+        manager.backend_events.clear()
+
+        self.assertFalse(manager.restore("nope"))
+
+        self.assertEqual(manager.backend_events, [])
+        self.assertEqual(manager.current_branch_id, "left")
+        self.assertIn("left", [branch.id for branch in manager.live_branches])
 
     def test_parking_current_branch_returns_to_default(self) -> None:
         manager = MemoryForkableManager()

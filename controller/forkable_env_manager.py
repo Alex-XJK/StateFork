@@ -43,6 +43,8 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
         self,
         backend_name: str,
         decider: Optional[Decider] = None,
+        *,
+        restore_discard_first: bool = False,
     ) -> None:
         self._validate_decider(decider)
         super().__init__(
@@ -51,6 +53,12 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
         )
         self._live_branches: dict[str, BranchT] = {}
         self._branch_registry_lock = threading.RLock()
+        #: Which way :meth:`_core_restore` orders its two primitives. The
+        #: default materializes the target first, so a failed restore leaves
+        #: the current environment untouched. See
+        #: :meth:`_core_restore_discard_first` for when to invert that, and
+        #: what it costs.
+        self.restore_discard_first = bool(restore_discard_first)
 
     @staticmethod
     def _validate_decider(decider: Optional[Decider]) -> None:
@@ -249,7 +257,15 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
         snapshot_id: str,
         branch_id: str,
     ) -> tuple[bool, float]:
-        """Restore by materializing the target before retiring the old branch."""
+        """Restore by materializing the target before retiring the old branch.
+
+        With ``restore_discard_first`` the two primitives are ordered the other
+        way round; :meth:`_core_restore_discard_first` says why an environment
+        would ask for that and what guarantee it gives up.
+        """
+        if self.restore_discard_first:
+            return self._core_restore_discard_first(snapshot_id, branch_id)
+
         start = time.time()
         branches = self._materialize_branches(
             snapshot_id,
@@ -274,6 +290,93 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
 
         return True, time.time() - start
 
+    def _core_restore_discard_first(
+        self,
+        snapshot_id: str,
+        branch_id: str,
+    ) -> tuple[bool, float]:
+        """Retire the departing branch first, then materialize into its id.
+
+        The default order cannot restore a state whose own processes are still
+        running beside it. The backend materializes the target next to the live
+        branch, and every checkpointed listening socket is then bound a second
+        time in the same network namespace, which CRIU refuses::
+
+            criu/sk-inet.c:1059  inet: Can't bind inet socket (id 45):
+                                 Address already in use
+
+        So a task that left a server running cannot be restored at all, and it
+        cannot be forked either: measured on waypoint v0.7.0 with nginx live,
+        the checkpoint succeeds while every materialization beside it fails.
+        Retiring first frees both the id and the port, and the same checkpoint
+        then comes back in full (290 ms, all 57 nginx processes, answering).
+
+        **The guarantee is inverted, and a caller must choose it knowingly.**
+        The default order leaves the current environment untouched when
+        materialization fails. This one destroys before it builds: if the
+        target cannot be materialized back into the freed id, one attempt is
+        made under a fresh id so the session still has something live; if that
+        fails too, the session has no current branch and the caller must treat
+        it as fatal.
+
+        Only for a caller that owns the session sequentially: the departing
+        branch's processes are killed before anything is put back, so no
+        concurrent branch work may be in flight, and whatever was not
+        checkpointed is gone.
+        """
+        start = time.time()
+        # Validate the target while failing is still free — after the retire
+        # below, there is nothing to go back to.
+        with self._state_lock:
+            node = self.snapshot_graph.get(snapshot_id)
+            if node is not None and node.is_virtual:
+                logger.error(
+                    "Snapshot %s is virtual; a discard-first restore needs a "
+                    "physical snapshot.",
+                    snapshot_id,
+                )
+                return False, 0.0
+            if snapshot_id not in self.snapshots:
+                logger.error("Snapshot %s not found.", snapshot_id)
+                return False, 0.0
+
+        # Deliberately past the guards in `_discard_branch`: this retires the
+        # current branch, and may retire the default one, because it is about
+        # to put a branch back under that id.
+        if not self._retire_branch(branch_id):
+            logger.error(
+                "Discard-first restore could not retire %s; nothing was "
+                "destroyed and the current branch is unchanged.",
+                branch_id,
+            )
+            return False, 0.0
+
+        branches = self._materialize_branches(snapshot_id, [branch_id])
+        if not branches:
+            logger.error(
+                "Discard-first restore retired %s but could not materialize "
+                "%s back into that id; trying a fresh id.",
+                branch_id,
+                snapshot_id,
+            )
+            branches = self._materialize_branches(snapshot_id, [None])
+            if not branches:
+                logger.error(
+                    "Discard-first restore of %s failed after %s was already "
+                    "retired: this session has no live current branch.",
+                    snapshot_id,
+                    branch_id,
+                )
+                return False, 0.0
+            logger.warning(
+                "Discard-first restore landed on %s instead of %s.",
+                branches[0].id,
+                branch_id,
+            )
+
+        self._set_current_branch(branches[0].id)
+        return True, time.time() - start
+
     def discard_branch(self, branch_id: str) -> bool:
         """Destroy a non-current live branch; any un-snapshotted state is lost."""
         with self._current_branch_lock:
@@ -286,7 +389,15 @@ class ForkableEnvironmentManager(EnvironmentManager, Generic[BranchT]):
         if branch_id == self.current_branch_id:
             logger.error("Refusing to discard the current branch.")
             return False
+        return self._retire_branch(branch_id)
 
+    def _retire_branch(self, branch_id: str) -> bool:
+        """Destroy a live branch, with no policy about which branch it is.
+
+        :meth:`_discard_branch` is the guarded entry point and is what a caller
+        wants. This one is also reached from a discard-first restore, which
+        retires the current branch — possibly the default branch — on purpose.
+        """
         with self._state_lock:
             branch = self._live_branches.get(branch_id)
             state = self._branches.get(branch_id)

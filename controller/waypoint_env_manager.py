@@ -245,8 +245,14 @@ class WaypointAttachManager(ForkableEnvironmentManager[WaypointFork]):
                  session_id: str,
                  target_pid: Optional[int] = None,
                  decider: Optional[Decider] = None,
+                 *,
+                 restore_discard_first: bool = False,
                  ):
-        super().__init__(backend_name="Waypoint", decider=decider)
+        super().__init__(
+            backend_name="Waypoint",
+            decider=decider,
+            restore_discard_first=restore_discard_first,
+        )
         self.session_id = session_id
         # target_pid is obsolete in the fork model (a fork *is* its process
         # tree); accepted but ignored so older callers keep working.
@@ -636,6 +642,8 @@ class WaypointBuildManager(WaypointAttachManager):
                  dockerfile_dir: str = ".",
                  build: bool = True,
                  decider: Optional[Decider] = None,
+                 *,
+                 restore_discard_first: bool = False,
                  ):
         # Validate policy before `build` / `init` creates a session.
         self._validate_decider(decider)
@@ -682,7 +690,11 @@ class WaypointBuildManager(WaypointAttachManager):
 
         logger.info(f"New session {sid} with work directory '{self._work_dir}' created.")
 
-        super().__init__(session_id=sid, decider=decider)
+        super().__init__(
+            session_id=sid,
+            decider=decider,
+            restore_discard_first=restore_discard_first,
+        )
 
         # Attach the new WaypointCalculator to this session's checkpoint store
         checkpoints_dir = os.path.abspath(os.path.join(self._work_dir, "..", "checkpoints"))
