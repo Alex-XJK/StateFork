@@ -432,6 +432,13 @@ class WaypointAttachManager(ForkableEnvironmentManager[WaypointFork]):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                # Task output is arbitrary bytes -- mail spools, binaries, a
+                # latin-1 log line. Strict UTF-8 turns one stray byte into a
+                # UnicodeDecodeError that the handler below reports as a
+                # backend failure (rc -1), throwing away the command's real
+                # exit code AND all of its output. Seen on all three plain
+                # mailman trials, 2026-09-12. Replace the byte instead.
+                errors="replace",
                 timeout=timeout,
                 check=False,
             )
