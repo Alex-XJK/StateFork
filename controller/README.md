@@ -104,6 +104,35 @@ so clients can depend on `ForkableEnvironmentManager` rather than detecting a co
   winner → next generation → backtrack → export → cleanup) and asserts each of these contracts; it doubles as the
   integration test for the Waypoint backend and requires root plus Waypoint v0.7.0+.
 
+### 🧊 smolvm backend (`smolvm_build` / `smolvm_attach`)
+
+[smolvm](https://github.com/smol-machines/smolvm) runs each environment as a hardware-isolated microVM
+(KVM on Linux, Hypervisor.framework on macOS) and needs no root. A machine started `--branchable` backs its
+guest RAM with a memfd, so a *running* machine can be **branched**: the child is a copy-on-write clone of
+RAM, disks, processes, shell state and listening services, and both sides keep running. The backend is a
+`ForkableEnvironmentManager` with the same verbs as Waypoint; the mapping onto the engine is:
+
+| Mode | `snapshot()` | `fork()` / `restore()` | What is captured |
+|------|--------------|------------------------|------------------|
+| `live` (default) | freeze the branch's workload in place (SIGSTOP every PID but init and the exec session), branch a fresh child for the branch to continue on, thaw the child. The frozen machine **is** the immutable snapshot; nothing is written to disk. | `smolvm machine branch --from <frozen snapshot>` then thaw the child | files, RAM, process tree, PIDs, sockets, PTYs |
+| `checkpoint` | `smolvm machine checkpoint` into a chunk-deduplicated store (a portable `.checkpoint`) | `smolvm machine create --from <checkpoint>` + `start --branchable` | the same, serialized; comparable to CRIU / Firecracker snapshots |
+
+Notes:
+
+- In `live` mode a branch's engine-side machine name changes at every seal (the old machine becomes the
+  snapshot). Address branches by id; `SmolvmBranch.machine` is for diagnostics.
+- `park_branch()` in `live` mode freezes the branch's own machine and keeps it as the snapshot (no copy).
+- `smolvm_build` takes a registry image (`base_image`), not a Dockerfile; the default workload idles so the
+  machine stays up. Pass `net=True` if the guest itself needs the network.
+- `smolvm_attach` adopts an existing running machine as `main`; `cleanup()` deletes only machines this
+  manager created and thaws the attached machine.
+- Storage calculators report each snapshot's data directory (`SNAPSHOT_DISK`) and, in `live` mode, the
+  proportional set size of each frozen snapshot's VMM process (`SNAPSHOT_MEMORY`), which splits shared
+  copy-on-write pages fairly between a snapshot and its children.
+- `scripts/smolvm_smoke.py` runs the fork workflow end to end without root;
+  `scripts/benchmark_smolvm_grid.py` times snapshot / fork / restore on a memory x disk grid for this and the
+  other backends.
+
 ### 🧪 Benchmark
 You can enter the benchmark interface through the `.stats` attribute of any `EnvironmentManager` subclass instance.
 
