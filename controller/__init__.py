@@ -6,6 +6,7 @@ from .hybrid_env_manager import HybridAttachManager, HybridBuildManager
 from .waypoint_env_manager import WaypointAttachManager, WaypointBuildManager, WaypointFork
 from .gvisor_env_manager import GvisorBuildManager, GvisorAttachManager
 from .firecracker_env_manager import FireBuildManager, FireAttachManager
+from .smolvm_env_manager import SmolvmAttachManager, SmolvmBuildManager, SmolvmBranch, SmolvmCli
 from .benchmark import BenchmarkStats, BenchmarkResult, Statistics
 from decider.decider import Decider, RandomDecider, AlwaysFalseDecider, AlwaysTrueDecider
 
@@ -20,7 +21,8 @@ EnvType = Literal[
     "hybrid_build", "hybrid_attach",
     "waypoint_build", "waypoint_attach", "ckpt_build", "ckpt_attach",
     "gvisor_build", "gvisor_attach",
-    "firecracker_build", "firecracker_attach"
+    "firecracker_build", "firecracker_attach",
+    "smolvm_build", "smolvm_attach"
 ]
 
 """
@@ -130,6 +132,26 @@ def create_env_manager(method: EnvType, **kwargs) -> EnvironmentManager:
             fire_binary=Path(kwargs.get("fire_binary", "/tmp/fire_vm/firecracker")),
 
             api_socket=kwargs.get("api_socket", "/tmp/firecracker.socket"),
+            decider=kwargs.get("decider")
+        )
+    elif method == "smolvm_build":
+        return SmolvmBuildManager(
+            base_image=kwargs.get("base_image", "debian:bookworm-slim"),
+            command=kwargs.get("command"),
+            net=kwargs.get("net", False),
+            cpus=kwargs.get("cpus"),
+            mem_mib=kwargs.get("mem_mib"),
+            extra_args=kwargs.get("extra_args"),
+            snapshot_mode=kwargs.get("snapshot_mode", "live"),
+            checkpoint_dir=kwargs.get("checkpoint_dir"),
+            dockerfile_dir=kwargs.get("dockerfile_dir"),
+            decider=kwargs.get("decider")
+        )
+    elif method == "smolvm_attach":
+        return SmolvmAttachManager(
+            machine_name=kwargs["machine_name"],
+            snapshot_mode=kwargs.get("snapshot_mode", "live"),
+            checkpoint_dir=kwargs.get("checkpoint_dir"),
             decider=kwargs.get("decider")
         )
     else:

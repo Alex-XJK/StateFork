@@ -14,7 +14,7 @@ enabling users to take snapshots, roll back state, and benchmark key operations 
 - 🧪 Benchmark time and storage performance of snapshot/restore operations
 - 🧩 Works with unmodified apps (FastAPI, Python/C++ scripts, etc.)
 - ⚙️ CLI-based interactive interface
-- 🧱 Easily extendable backend design with Docker, Podman, CRIU, or FirecrackerVM support
+- 🧱 Easily extendable backend design with Docker, Podman, CRIU, FirecrackerVM, or smolvm microVM support
 
 ## 🗂 Project Structure
 ```
@@ -35,6 +35,7 @@ StateFork/
   │   ├── container_env_manager.py
   │   ├── hybrid_env_manager.py
   │   ├── waypoint_env_manager.py   # fork-based Waypoint backend (ForkableEnvironmentManager)
+  │   ├── smolvm_env_manager.py     # smolvm microVM backend (ForkableEnvironmentManager, live CoW forks)
   │   └── ...
   ├── decider/               # Snapshot decision policies (physical vs virtual)
   │   ├── __init__.py
@@ -45,6 +46,8 @@ StateFork/
   ├── logs/                  # Benchmark and package analysis files
   ├── scripts/               # Testing and utility scripts
   │   ├── search_workflow_demo.py   # end-to-end fork workflow demo/test (Waypoint)
+  │   ├── smolvm_smoke.py           # end-to-end fork workflow test (smolvm, no root)
+  │   ├── benchmark_smolvm_grid.py  # snapshot/fork/restore latency grid across substrates
   │   └── ...
   ├── tests/                 # Unit tests: python -m unittest discover -s tests
   └── requirements.txt
@@ -61,6 +64,7 @@ They follow the naming convention `{Backend}{Action}Manager`, where:
   - `Waypoint` for Waypoint, a lightweight checkpointing tool (captures both file and process states; concurrent live forks with Waypoint v0.7.0+)
   - `Gvisor` for Docker in gVisor (captures both file and process states)
   - `Fire` for Firecracker microVM (captures process states)
+  - `Smolvm` for smolvm microVMs (captures files, processes and RAM; concurrent live forks by copy-on-write branching of a running machine; no root needed)
 - **{Action}** Lifecycle mode:
   - `Build` starts a fresh instance (usually from a Dockerfile or base image)
   - `Attach` connects to an existing container or process
@@ -97,6 +101,8 @@ See the full method table below for supported types and arguments.
 | `gvisor_attach`   | GvisorAttachManager         | gVisor + Docker | `container_name(str)`, `base_image(str)` | `extra_args(List[str])`                                                                  |
 |`firecracker_build`| FireBuildManager            | Firecracker     |                                          | `fire_parent_dir(str)`, `inject_dir(str)`                                                |
 |`firecracker_attach`| FireAttachManager          | Firecracker     |`pid(int)`, `microvm_ip(str)`, `tap_dev(str)`, `key(str)`, `checkpoint_dir(str)`, `vm_dir(str)`, `fire_binary(str)`, `api_socket(str)`| |
+| `smolvm_build`    | SmolvmBuildManager          | smolvm microVM  |                                          | `base_image(str)`, `command(List[str])`, `net(bool)`, `cpus(int)`, `mem_mib(int)`, `extra_args(List[str])`, `snapshot_mode("live"\|"checkpoint")`, `checkpoint_dir(str)` |
+| `smolvm_attach`   | SmolvmAttachManager         | smolvm microVM  | `machine_name(str)`                      | `snapshot_mode("live"\|"checkpoint")`, `checkpoint_dir(str)`                                 |
 
 ## 🔀 Smart Decider
 
