@@ -33,7 +33,7 @@ Examples::
     .venv/bin/python scripts/benchmark_smolvm_grid.py --manager smolvm_build --sizes 0 --repeats 1
     .venv/bin/python scripts/benchmark_smolvm_grid.py --manager smolvm_build --snapshot-mode checkpoint
     sudo -E .venv/bin/python scripts/benchmark_smolvm_grid.py --manager waypoint_build \\
-        --rootfs /home/binsquare/daplab/rootfs-debian --sizes 0 512 1024 2048 --repeats 3
+        --rootfs /path/to/rootfs --sizes 0 512 1024 2048 --repeats 3
 
 Output: a CSV of every timed operation (``--csv``) and a markdown table of
 medians (``--md``, also printed).
@@ -64,8 +64,8 @@ from controller import EnvironmentManager, ForkableEnvironmentManager, create_en
 log = logging.getLogger("grid")
 
 IMAGE = "python:3.12-slim"
-READY = "/tmp/sf_ready"
-DISK_FILE = "/tmp/sf_disk"
+READY = "/var/tmp/sf_ready"
+DISK_FILE = "/var/tmp/sf_disk"
 
 # Touch every page of M MiB and stay alive. Written so it runs on any python3.
 MEM_PY = (
