@@ -59,6 +59,9 @@ def _run_waypoint(args: list[str], **kwargs):
     # (e.g. Harbor) request privilege escalation via WAYPOINT_CMD_PREFIX, e.g.
     # "sudo -n -E". Empty/unset => run the binary directly (unchanged behavior).
     prefix = shlex.split(os.environ.get("WAYPOINT_CMD_PREFIX", ""))
+    if kwargs.get("text"):
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "replace")
     return subprocess.run(
         [*prefix, WAYPOINT_BIN, *args],
         cwd=STATEFORK_ROOT,
@@ -432,7 +435,12 @@ class WaypointAttachManager(ForkableEnvironmentManager[WaypointFork]):
             return proc.returncode, proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as e:
             out = e.stdout or ""
-            err = (e.stderr or "") + f"\n[timeout after {timeout}s]"
+            err = e.stderr or ""
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", errors="replace")
+            if isinstance(err, bytes):
+                err = err.decode("utf-8", errors="replace")
+            err += f"\n[timeout after {timeout}s]"
             logger.error(f"Waypoint exec timeout: {e}")
             return -2, out, err  # -2 = TIMEOUT; -1 = backend failure
         except Exception as e:
